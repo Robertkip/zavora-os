@@ -1,3 +1,4 @@
+pub mod camera;
 pub mod realtime;
 
 use std::sync::Arc;
@@ -11,6 +12,8 @@ pub struct VoiceState {
     pub enabled: bool,
     pub model: Option<Arc<GeminiRealtimeModel>>,
     pub voice_name: String,
+    /// Camera channel (M10-T5): frames over `/ws/voice`, gestures back as `ui_gesture` tool calls.
+    pub camera: bool,
 }
 
 impl VoiceState {
@@ -20,6 +23,7 @@ impl VoiceState {
                 enabled: false,
                 model: None,
                 voice_name: config.voice_name.clone(),
+                camera: false,
             };
         };
 
@@ -33,6 +37,7 @@ impl VoiceState {
             enabled: true,
             model: Some(model),
             voice_name: config.voice_name.clone(),
+            camera: config.camera_enabled,
         }
     }
 }

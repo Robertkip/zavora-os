@@ -64,6 +64,9 @@
       set(ORDER[idx], true);
     }
 
+    // Other surfaces (camera gestures, M10-T5) drive the pager through this.
+    window.__ZAVORA_LENS__ = { step, set: (w) => set(w, true), current: () => current };
+
     btns.forEach((b) => b.addEventListener('click', () => set(b.dataset.lens, true)));
 
     // Interactive surfaces keep their own gestures (card drag/fling, panels, feeds).

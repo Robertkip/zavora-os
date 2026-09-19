@@ -201,6 +201,7 @@ pub async fn run_prompt(
     session_id: &str,
     prompt: &str,
 ) -> anyhow::Result<String> {
+    crate::agents::ensure_runner_session(runner, user_id, session_id).await;
     let mut stream = runner
         .run(
             UserId::try_from(user_id)?,

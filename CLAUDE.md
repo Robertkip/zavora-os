@@ -28,6 +28,11 @@ and user-owned memory.
 - MCP servers are separate binaries built from the `mcp-servers` monorepo; paths are the
   `MCP_*_PATH` variables in `.env.example`. Postgres for local dev: `docker compose up -d`
   (port 5434); migrations run at boot via `sqlx::migrate!`.
+- **A shell-exported `GOOGLE_API_KEY` wins over `.env`.** dotenv never overrides a variable that
+  is already set, so a stale `export GOOGLE_API_KEY=…` in `~/.zshrc` makes the server and the
+  live tests use that key while `.env` says otherwise (symptom: `API key not valid` from Gemini
+  although `curl` with the `.env` key works). Run `unset GOOGLE_API_KEY` first, or pass
+  `GOOGLE_API_KEY=$(grep '^GOOGLE_API_KEY=' .env | cut -d= -f2) cargo run`.
 - **adk-rust drift.** adk-rust `main` moves fast. As of 2026-09-19 this repo's `main` does not
   compile against it (rmcp 3, `AwpState::builder`, rate-limiter signature). The fix is the first
   commit of PR #2 (`build: track adk-rust main`). If you hit type mismatches in `src/tools/mcp.rs`
@@ -71,7 +76,7 @@ cargo clippy --all-targets
 | `src/tools/` | MCP child-process spawn with reconnect (`mcp.rs`), allowlist catalog (`allowlist.rs`), registry sync, `MergedToolset`, `exec_tool` for one-off calls. |
 | `src/ambient/` | Cron-driven background agents (research, scout, maker), `AmbientStore` with a broadcast channel and the DND flag. |
 | `src/intelligence/` | Content-free ledger (`ledger.rs`), daily pattern aggregation (`patterns.rs`, S7-T1), personal baseline and drift detection (`baseline.rs`, S7-T2), their Postgres I/O (`store.rs`). Pure statistics, no clock: `as_of` is an argument. `src/bin/run_baseline.rs` runs the pipeline locally; `INTELLIGENCE_UTC_OFFSET_HOURS` sets the day boundary. |
-| `src/rails/`, `src/greeting/`, `src/voice/` | People/Live rails, personalized greeting (facts only), Gemini Live voice over WebSocket. |
+| `src/rails/`, `src/greeting/`, `src/voice/` | People/Live rails, personalized greeting (facts only), Gemini Live voice over WebSocket; `voice/camera.rs` is the camera channel (frames in, `ui_gesture` tool call out, `ZAVORA_CAMERA`). |
 | `src/awp_gate.rs`, `src/auth.rs`, `src/pg_session.rs` | AWP trust levels and rate limits, JWT/OAuth, adk session persistence. |
 | `web/index.html`, `web/static/field-client.js` | The field UI and its SSE bridge. The visual language is a product constraint — do not redesign it while wiring features. |
 | `business.toml`, `mcp_allowlists.toml` | AWP identity and capability catalog; per-agent tool allowlists (and, from Phase 2, world / mode / effects). |

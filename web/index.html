@@ -274,6 +274,18 @@
     background: rgba(255,255,255,.05); border: 1px solid var(--stroke); color: var(--muted);
     font-size: 17px; display: grid; place-items: center; transition: all .25s var(--spring); position: relative; }
   .mic:hover { color: var(--ink); background: rgba(255,255,255,.1); }
+  .mic[hidden] { display: none; }   /* the grid display above would otherwise beat [hidden] */
+  /* Camera window (M10-T5): what the camera sends and what comes back */
+  .cam-preview { position: fixed; left: 24px; bottom: 118px; width: 224px; border-radius: 14px; overflow: hidden; z-index: 40;
+    background: rgba(10,12,20,.78); border: 1px solid var(--stroke); backdrop-filter: blur(10px);
+    opacity: 0; transform: translateY(12px); pointer-events: none; transition: all .35s var(--spring); }
+  .cam-preview.on { opacity: 1; transform: none; pointer-events: auto; }
+  .cam-preview video { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; transform: scaleX(-1); background: #000; }
+  .cam-cap { display: flex; align-items: center; gap: 8px; padding: 8px 10px 2px; font-size: 11px; color: var(--muted); letter-spacing: .02em; }
+  .cam-dot { width: 7px; height: 7px; border-radius: 50%; background: #34d399; box-shadow: 0 0 8px #34d399; animation: camPulse 1.6s ease-in-out infinite; }
+  @keyframes camPulse { 0%, 100% { opacity: 1 } 50% { opacity: .35 } }
+  .cam-last { padding: 0 10px 10px; font-size: 12px; line-height: 1.35; color: var(--ink); min-height: 16px; transition: color .3s; }
+  .cam-last.hit { color: var(--accent-c); }
   .mic.listening { color: #fff; border-color: var(--accent-c);
     background: linear-gradient(120deg, var(--accent-c), #ff5c8a); }
   .mic.listening::after { content: ""; position: absolute; inset: -6px; border-radius: 50%;
@@ -823,6 +835,7 @@
         <span class="spark"></span>
         <input id="intent" placeholder="What do you want to do?" autocomplete="off" />
         <button class="mic" id="mic" title="Speak">🎤</button>
+        <button class="mic" id="cam" title="Camera — Suzy watches for gestures" hidden>📷</button>
         <button class="go" id="go" title="Begin">↑</button>
       </div>
     </div>
@@ -1685,26 +1698,64 @@ function startSpeechFallback(){
     if (input.value.trim()) submitIntent(input.value);
   };
 }
+// Live inputs (M10): the microphone and the camera are independent — either runs alone, both
+// share one Suzy session. The buttons mirror the actual capture state.
+const cam = document.getElementById('cam');
+function syncLiveUi(){
+  const live = window.ZavoraLiveVoice;
+  if (!live) return;
+  const m = !!live.isMicActive?.(), c = !!live.isCameraActive?.();
+  mic.classList.toggle('listening', m);
+  cam?.classList.toggle('listening', c);
+  input.placeholder = m && c ? 'Suzy is listening and watching…' : m ? 'Suzy is listening…' : c ? 'Suzy is watching…' : 'What do you want to do?';
+}
+window.addEventListener('zavora:mic', syncLiveUi);
+window.addEventListener('zavora:camera', syncLiveUi);
+
 mic.addEventListener('click', async () => {
   const live = window.ZavoraLiveVoice;
-  if (live?.isActive?.()) {
-    live.stop();
-    mic.classList.remove('listening');
-    input.placeholder = 'What do you want to do?';
+  if (live?.isMicActive?.()) {
+    live.stopMic();
+    syncLiveUi();
     return;
   }
   if (live?.isEnabled?.()) {
     mic.classList.add('listening');
     input.placeholder = 'Suzy is listening…';
-    const sid = sessionStorage.getItem('zavora_session_id');
-    const ok = await live.start({
-      sessionId: sid,
+    const ok = await live.startMic({
+      sessionId: sessionStorage.getItem('zavora_session_id'),
       onTranscript: (t) => { if (t.trim()) input.value = t.trim(); },
     });
+    syncLiveUi();
     if (ok) return;
-    mic.classList.remove('listening');
   }
   startSpeechFallback();
+});
+
+// Camera (M10-T5): shown only when the server offers it; never in demo mode.
+(async () => {
+  if (!cam) return;
+  if (window.__ZAVORA_BOOT__) await window.__ZAVORA_BOOT__;
+  if (window.__ZAVORA_DEMO__) return;
+  // live-voice.js is loaded after this inline script; wait for it.
+  for (let i = 0; i < 50 && !window.ZavoraLiveVoice; i++) await new Promise(r => setTimeout(r, 100));
+  const live = window.ZavoraLiveVoice;
+  await live?.probe?.();
+  if (live?.isCameraEnabled?.()) cam.removeAttribute('hidden');
+})();
+cam?.addEventListener('click', async () => {
+  const live = window.ZavoraLiveVoice;
+  if (!live?.isCameraEnabled?.()) return;
+  if (live.isCameraActive()) {
+    live.stopCamera();
+    syncLiveUi();
+    return;
+  }
+  cam.classList.add('listening');
+  input.placeholder = live.isMicActive?.() ? 'Suzy is listening and watching…' : 'Suzy is watching…';
+  try { await live.startCamera({ sessionId: sessionStorage.getItem('zavora_session_id') }); }
+  catch (e) { console.warn('camera unavailable:', e); }
+  syncLiveUi();
 });
 
 // click empty space exits focus
@@ -2521,6 +2572,8 @@ submitIntent = function (text) {
 <script src="/static/live-voice.js"></script>
 <script src="/static/field-client.js"></script>
 <script src="/static/lens.js"></script>
+<script src="/static/gestures.js"></script>
+<script src="/static/camera-preview.js"></script>
 <script src="/static/approvals.js"></script>
 <script src="/static/mother-chat.js"></script>
 </body>

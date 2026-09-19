@@ -6,6 +6,7 @@ use serde_json::json;
 
 use crate::agents::suzy;
 use crate::state::AppState;
+use crate::voice::camera;
 
 pub async fn build_suzy_runner(
     state: &AppState,
@@ -20,6 +21,7 @@ pub async fn build_suzy_runner(
     let mut instruction = String::from(
         "You are Suzy — warm, confident, quietly witty voice of the Mother Agent in Zavora Personal AI OS. \
          Help the user express intent, start their day, and let the Mother Agent orchestrate the specialized agents. \
+         When they ask what they need to know today (or for their briefing), call submit_intent with exactly that and read the summary aloud. \
          Keep replies concise and spoken-friendly (1–3 sentences unless they ask for detail).",
     );
     if let Some(tone) = &state.brand_tone {
@@ -29,6 +31,9 @@ pub async fn build_suzy_runner(
         "\nDefault greeting line when relevant: {}",
         state.brand_greeting_body
     ));
+    if state.voice.camera {
+        instruction.push_str(&camera::instruction());
+    }
     if let Some(sid) = &session_id {
         instruction.push_str(&format!("\nActive UI session id: {sid}."));
         if let Some(record) = state.sessions.get(sid).await {
@@ -44,7 +49,7 @@ pub async fn build_suzy_runner(
     let sid_for_intent = session_id.clone();
     let state_for_intent = state.clone();
 
-    let runner = RealtimeRunner::builder()
+    let mut builder = RealtimeRunner::builder()
         .model(model)
         .config(
             RealtimeConfig::default()
@@ -147,8 +152,32 @@ pub async fn build_suzy_runner(
                     "dispatch": "client_sse"
                 }))
             }),
-        )
-        .build()?;
+        );
+
+    // Camera channel (M10-T5): the call itself is the signal — the websocket relays every tool
+    // call to the client, which maps the gesture to a UI verb through the normal routes.
+    if state.voice.camera {
+        builder = builder.tool(
+            ToolDefinition {
+                name: camera::TOOL_NAME.into(),
+                description: Some(
+                    "Report one deliberate hand gesture you recognised in the camera frames. \
+                     Call it once per gesture; the interface performs the action."
+                        .into(),
+                ),
+                parameters: Some(camera::tool_parameters()),
+            },
+            FnToolHandler::new(|call| {
+                let raw = call.arguments["gesture"].as_str().unwrap_or("");
+                match camera::Gesture::parse(raw) {
+                    Some(g) => Ok(json!({ "status": "relayed", "gesture": g.as_str(), "effect": g.effect() })),
+                    None => Ok(json!({ "status": "error", "message": "unknown gesture; use one of the listed values" })),
+                }
+            }),
+        );
+    }
+
+    let runner = builder.build()?;
 
     Ok(runner)
 }

@@ -358,6 +358,46 @@ fn voice_state_boots_when_api_key_present() {
     }
 }
 
+#[test]
+fn voice_state_camera_follows_voice_and_flag() {
+    use spatial_os::voice::camera::{instruction, Gesture, TOOL_NAME};
+
+    common::load_env();
+    let config = AppConfig::from_env().expect("config");
+    let voice = spatial_os::voice::VoiceState::boot(&config);
+    assert_eq!(voice.camera, voice.enabled && config.camera_enabled, "camera needs voice and ZAVORA_CAMERA");
+
+    // What the client relies on exists whether or not a key is configured.
+    assert!(spatial_os::routes::events::UI_KINDS.contains(&"ui_gesture"), "content-free gesture rows");
+    assert!(spatial_os::memory::consent::CATEGORIES.contains(&"camera"), "camera is a consent category");
+    assert_eq!(TOOL_NAME, "ui_gesture");
+    let text = instruction();
+    for g in Gesture::ALL {
+        assert!(text.contains(g.as_str()) && text.contains(g.effect()), "{}", g.as_str());
+    }
+}
+
+#[tokio::test]
+async fn voice_state_status_route_reports_camera() {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    let state = offline_app_state();
+    let expected = state.voice.camera;
+    let app = axum::Router::new()
+        .route("/api/voice/status", axum::routing::get(spatial_os::routes::voice::status))
+        .with_state(state);
+    let response = app.oneshot(Request::get("/api/voice/status").body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let json: serde_json::Value = serde_json::from_slice(&axum::body::to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+    assert_eq!(json["camera"], serde_json::Value::Bool(expected));
+    assert_eq!(json["ws_path"], "/ws/voice");
+    if !json["enabled"].as_bool().unwrap() {
+        assert_eq!(json["camera"], false, "no camera without voice");
+    }
+}
+
 fn awp_test_state() -> adk_awp::AwpState {
     use adk_awp::{
         AwpState, BusinessContextLoader, DefaultTrustAssigner, InMemoryConsentService,
@@ -1116,17 +1156,18 @@ async fn mother_multi_target_merges_two_scenarios_offline() {
     let events = collect_sse_events(response).await;
     let types = ev_types(&events);
 
-    // One scenario header covering both delegated workflows (morning 3 cards + people 3 cards).
+    // One scenario header covering both delegated workflows (morning 3 + people 3) plus the
+    // Work Mother's two labeled stubs (S4) — re-indexed into one field.
     assert_eq!(types.iter().filter(|t| *t == "scenario").count(), 1, "{types:?}");
-    assert_eq!(events[0]["total_cards"], 6);
+    assert_eq!(events[0]["total_cards"], 8);
     let spawns: Vec<u64> = events
         .iter()
         .filter(|e| e["type"] == "card_spawn")
         .map(|e| e["index"].as_u64().unwrap())
         .collect();
-    assert_eq!(spawns, vec![0, 1, 2, 3, 4, 5], "cards must be re-indexed across targets");
+    assert_eq!(spawns, (0..8).collect::<Vec<u64>>(), "cards must be re-indexed across targets");
     assert!(events.iter().filter(|e| e["type"] == "card_spawn").all(|e| e["domain"].is_string()));
-    assert_eq!(types.iter().filter(|t| *t == "card_resolve").count(), 6);
+    assert_eq!(types.iter().filter(|t| *t == "card_resolve").count(), 8);
     // Exactly one synthesis from the Mother, then done.
     assert_eq!(types.iter().filter(|t| *t == "suzy_summary").count(), 1);
     let summary = events.iter().find(|e| e["type"] == "suzy_summary").unwrap();
@@ -1138,7 +1179,7 @@ async fn mother_multi_target_merges_two_scenarios_offline() {
 
     // Merged cards were persisted under the primary scenario with re-indexed positions.
     let cards = state.sessions.list_cards(&rec.session_id).await.expect("cards");
-    assert_eq!(cards.len(), 6);
+    assert_eq!(cards.len(), 8);
     assert!(cards.iter().all(|c| c.resolve.is_some()));
     let stored = state.sessions.get(&rec.session_id).await.unwrap();
     assert_eq!(stored.scenario.as_deref(), Some("morning"));
@@ -1260,7 +1301,7 @@ async fn mother_chat_route_streams_and_records_history() {
     assert_eq!(response.status(), StatusCode::OK);
     let events = collect_sse_events(response).await;
     assert_eq!(events[0]["type"], "scenario");
-    assert_eq!(events[0]["total_cards"], 6);
+    assert_eq!(events[0]["total_cards"], 8);
 
     let response = app
         .oneshot(Request::get(format!("/api/sessions/{}/chat", rec.session_id)).body(Body::empty()).unwrap())
@@ -1972,7 +2013,7 @@ async fn consent_routes_get_and_put_require_known_trust() {
 
     let res = send(Request::get(format!("/api/consents?session_id={}", rec.session_id)).body(Body::empty()).unwrap()).await;
     let body = read(res).await;
-    assert_eq!(body["categories"].as_array().unwrap().len(), 8);
+    assert_eq!(body["categories"].as_array().unwrap().len(), spatial_os::memory::consent::CATEGORIES.len());
     assert_eq!(body["persisted"], false);
     assert!(state.consents.has(&rec.user_id, "health", Domain::Home).await);
 
@@ -2428,4 +2469,336 @@ async fn s7_store_roundtrip_daily_baselines_observation() {
     for table in ["observations", "baselines", "activity_daily"] {
         sqlx::query(&format!("DELETE FROM {table} WHERE user_id = $1")).bind(&user).execute(&pool).await.unwrap();
     }
+}
+
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Phase 2 · S4 — Work World
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn work_mother_folds_fan_out_into_one_result_with_stubs_and_follow_ups() {
+    use chrono::{Duration, Utc};
+    use spatial_os::domain::Domain;
+    use spatial_os::intelligence::ledger::ActivityEvent;
+    use spatial_os::orchestrator::dispatch::{dispatch_intent, IntentDispatch};
+    use spatial_os::orchestrator::sse_collect::collect_sse_events;
+    use spatial_os::permissions::Effect;
+
+    let state = offline_app_state();
+    let rec = state.sessions.create_for_user("u-work-mother".into()).await;
+    // A thread the inbox agent read four days ago and never answered (hashed subject only).
+    let mut ev = ActivityEvent::new(&rec.user_id, Domain::Work, "inbox_agent", "tool_call")
+        .effect(Effect::Read)
+        .subject(state.ledger.hash_key(), "thread-contract");
+    ev.ts = Utc::now() - Duration::days(4);
+    state.ledger.record(ev);
+
+    let response = dispatch_intent(IntentDispatch { state: &state, session_id: rec.session_id.clone(), user_id: rec.user_id.clone(), text: "What's happening with work?".into() }).await;
+    let events = collect_sse_events(response).await;
+    let spawns: Vec<&serde_json::Value> = events.iter().filter(|e| e["type"] == "card_spawn").collect();
+    // morning (3) + people (3) + follow-ups (1) + two labeled stubs = 9, all re-indexed and all work.
+    assert_eq!(spawns.len(), 9, "{:?}", spawns.iter().map(|s| &s["card"]["title"]).collect::<Vec<_>>());
+    assert_eq!(events[0]["total_cards"], 9);
+    assert!(spawns.iter().all(|s| s["domain"] == "work"));
+    let titles: Vec<&str> = spawns.iter().map(|s| s["card"]["title"].as_str().unwrap()).collect();
+    assert!(titles.contains(&"Follow-ups") && titles.contains(&"Career") && titles.contains(&"Professional presence"));
+    let resolves: Vec<&serde_json::Value> = events.iter().filter(|e| e["type"] == "card_resolve").collect();
+    assert_eq!(resolves.len(), 9);
+    assert!(resolves.iter().any(|r| r["resolve"]["big"] == "1 unanswered"), "3-day-old thread is flagged");
+    assert_eq!(resolves.iter().filter(|r| r["resolve"]["big"].as_str().map(|b| b.starts_with("STUB")).unwrap_or(false)).count(), 2, "stubs are labeled, never fake");
+    assert_eq!(events.iter().filter(|e| e["type"] == "suzy_summary").count(), 1);
+    let html = events.iter().find(|e| e["type"] == "suzy_summary").unwrap()["html"].as_str().unwrap();
+    assert!(html.contains("Follow-ups") && html.contains("unanswered"), "{html}");
+    assert!(!serde_json::to_string(&events).unwrap().contains("thread-contract"), "subjects never leave the ledger");
+}
+
+#[test]
+fn work_agents_carry_no_finance_or_health_tools() {
+    use spatial_os::domain::Domain;
+    use spatial_os::tools::allowlist::AllowlistCatalog;
+    let catalog = AllowlistCatalog::from_file(&common::manifest_dir().join("mcp_allowlists.toml")).expect("catalog");
+    let forbidden_servers = ["banking", "market_data", "real_estate"];
+    let forbidden_tools = ["list_transactions", "search_transactions", "list_accounts", "yfinance_chart", "get_forecast"];
+    for id in spatial_os::worlds::work::phase1_agent_ids() {
+        let spec = catalog.spec_for(id).unwrap_or_else(|| panic!("work agent {id} missing from allowlist"));
+        assert_eq!(spec.world, Domain::Work, "{id} must be tagged work");
+        assert!(spec.mcp_servers.iter().all(|s| !forbidden_servers.contains(&s.as_str())), "{id} reaches a finance/home server");
+        assert!(spec.tool_names().iter().all(|t| !forbidden_tools.contains(&t.as_str())), "{id} has a finance/health tool");
+    }
+    // Stubs exist in the catalog with no tools and Observe mode.
+    for id in ["career_agent", "professional_social_agent"] {
+        let spec = catalog.spec_for(id).expect(id);
+        assert!(spec.tools.is_empty());
+        assert_eq!(spec.mode, spatial_os::permissions::Mode::Observe);
+    }
+    catalog.validate_effects(true).expect("effects complete");
+}
+
+#[tokio::test]
+async fn work_stub_agents_build_and_label_themselves() {
+    let career = spatial_os::agents::career::build().await.expect("career stub");
+    assert_eq!(career.name(), "career_agent");
+    let social = spatial_os::agents::professional_social::build().await.expect("social stub");
+    assert_eq!(social.name(), "professional_social_agent");
+}
+
+/// Regression: every runner is keyed by its own app name, but only the `zavora-os` session was
+/// ever created, so the router, Suzy, the Mother's synthesis and the workflow runners failed with
+/// `session.not_found` and silently fell back. `ensure_runner_session` creates the session on
+/// first use and is idempotent.
+#[tokio::test]
+async fn mother_runner_session_is_created_on_first_use() {
+    use adk_agent::CustomAgentBuilder;
+    use adk_core::{Content, Event, SessionId, UserId};
+    use adk_runner::Runner;
+    use adk_session::{GetRequest, InMemorySessionService};
+
+    let echo: Arc<dyn adk_core::Agent> = Arc::new(
+        CustomAgentBuilder::new("echo")
+            .description("replies with a fixed word")
+            .handler(|_ctx| async move {
+                let mut event = Event::new("echo");
+                event.author = "echo".into();
+                event.llm_response.content = Some(Content::new("assistant").with_text("PONG"));
+                Ok(Box::pin(futures::stream::iter(vec![Ok(event)])) as adk_core::EventStream)
+            })
+            .build()
+            .expect("stub agent"),
+    );
+    let sessions: Arc<dyn adk_session::SessionService> = Arc::new(InMemorySessionService::new());
+    let runner = Runner::builder().app_name("zavora-os-test-app").agent(echo).session_service(sessions.clone()).build().expect("runner");
+
+    // Without the helper the run fails exactly the way the live server did: `Runner::run`
+    // returns a stream whose first item is the `session.not_found` error.
+    let mut missing = runner
+        .run(UserId::try_from("u-runner").unwrap(), SessionId::try_from("s-runner").unwrap(), Content::new("user").with_text("hi"))
+        .await
+        .expect("run returns a stream");
+    let first = missing.next().await.expect("one item");
+    let err = first.err().expect("a runner must not find a session nobody created").to_string();
+    assert!(err.contains("not_found") || err.contains("not found"), "unexpected error: {err}");
+    drop(missing);
+
+    spatial_os::agents::ensure_runner_session(&runner, "u-runner", "s-runner").await;
+    spatial_os::agents::ensure_runner_session(&runner, "u-runner", "s-runner").await; // idempotent
+    assert!(sessions
+        .get(GetRequest { app_name: "zavora-os-test-app".into(), user_id: "u-runner".into(), session_id: "s-runner".into(), num_recent_events: None, after: None })
+        .await
+        .is_ok());
+
+    let mut stream = runner
+        .run(UserId::try_from("u-runner").unwrap(), SessionId::try_from("s-runner").unwrap(), Content::new("user").with_text("hi"))
+        .await
+        .expect("run succeeds once the session exists");
+    let mut text = String::new();
+    while let Some(ev) = stream.next().await {
+        if let Some(c) = ev.expect("event").llm_response.content {
+            text.extend(c.parts.iter().filter_map(|p| p.text().map(str::to_string)));
+        }
+    }
+    assert!(text.contains("PONG"), "got {text:?}");
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 · S5 — Home World
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn home_mother_folds_family_and_personal_cards_from_memory() {
+    use chrono::{Duration, Local};
+    use spatial_os::domain::Domain;
+    use spatial_os::intelligence::ledger::ActivityEvent;
+    use spatial_os::orchestrator::dispatch::{dispatch_intent, IntentDispatch};
+    use spatial_os::orchestrator::sse_collect::collect_sse_events;
+
+    let state = offline_app_state();
+    let rec = state.sessions.create_for_user("u-home-mother".into()).await;
+    let run = |text: String| {
+        let state = state.clone();
+        let (sid, uid) = (rec.session_id.clone(), rec.user_id.clone());
+        async move { collect_sse_events(dispatch_intent(IntentDispatch { state: &state, session_id: sid, user_id: uid, text }).await).await }
+    };
+
+    // The user states a date and a personal task in chat; the task was postponed twice (ledger).
+    let soon = (Local::now().date_naive() + Duration::days(10)).format("%-d %b").to_string();
+    run(format!("Remember Sara's birthday is {soon}")).await;
+    run("remember to renew my passport".to_string()).await;
+    for _ in 0..2 {
+        state.ledger.record(
+            ActivityEvent::new(&rec.user_id, Domain::Home, "personal_productivity", "task_postponed")
+                .subject(state.ledger.hash_key(), "task.renew_my_passport"),
+        );
+    }
+    let items = state.memory.export(&rec.user_id).await;
+    assert!(items.iter().any(|i| i.key == "date.birthday.sara" && i.domain == Domain::Home), "{:?}", items.iter().map(|i| &i.key).collect::<Vec<_>>());
+    assert!(items.iter().any(|i| i.key == "task.renew_my_passport" && i.domain == Domain::Home));
+
+    let events = run("Remind me about family commitments.".to_string()).await;
+    assert_eq!(events[0]["type"], "scenario");
+    assert_eq!(events[0]["total_cards"], 3, "Family + Personal + labeled Personal social stub");
+    let spawns: Vec<&serde_json::Value> = events.iter().filter(|e| e["type"] == "card_spawn").collect();
+    assert!(spawns.iter().all(|s| s["domain"] == "home"));
+    let titles: Vec<&str> = spawns.iter().map(|s| s["card"]["title"].as_str().unwrap()).collect();
+    assert_eq!(titles, vec!["Family", "Personal", "Personal social"]);
+    let resolves: Vec<&serde_json::Value> = events.iter().filter(|e| e["type"] == "card_resolve").collect();
+    assert_eq!(resolves[0]["resolve"]["big"], "1 date ahead");
+    assert!(resolves[0]["resolve"]["sub"].as_str().unwrap().contains("birthday · Sara in 10 days"), "{}", resolves[0]["resolve"]["sub"]);
+    assert_eq!(resolves[1]["resolve"]["big"], "1 personal task");
+    assert!(resolves[1]["resolve"]["sub"].as_str().unwrap().contains("renew my passport (postponed 2×)"));
+    assert!(resolves[2]["resolve"]["big"].as_str().unwrap().starts_with("STUB"));
+    let summary = events.iter().find(|e| e["type"] == "suzy_summary").unwrap()["html"].as_str().unwrap();
+    assert!(summary.contains("Home:") && summary.contains("Sara"), "{summary}");
+    assert_eq!(events.iter().filter(|e| e["type"] == "suzy_summary").count(), 1);
+}
+
+#[tokio::test]
+async fn home_personal_productivity_reads_the_shared_tasks_store() {
+    use spatial_os::agents::personal_productivity::{self, SOURCE_STORE};
+    use spatial_os::domain::Domain;
+    use spatial_os::intelligence::ledger::LedgerService;
+    use spatial_os::memory::MemoryService;
+    use spatial_os::tools::tasks::{store_handle, NewTask, Priority, TaskKind, TOOL_NAMES};
+
+    let user = "u-personal-store";
+    let agent = "personal_productivity_agent";
+    let store = store_handle();
+    let new = |domain: Domain, title: &'static str, kind: TaskKind| NewTask {
+        domain,
+        title,
+        kind,
+        due: None,
+        duration_minutes: None,
+        priority: Priority::Normal,
+        source_agent: agent,
+        notes: None,
+    };
+    let passport = store.create(user, new(Domain::Home, "Renew passport", TaskKind::Errand)).await;
+    store.postpone(user, passport.id, None, agent).await.expect("postponed once");
+    store.postpone(user, passport.id, None, agent).await.expect("postponed twice");
+    store.create(user, new(Domain::Shared, "Book the dentist", TaskKind::Task)).await;
+    store.create(user, new(Domain::Work, "Ship the deck", TaskKind::Deadline)).await;
+    let done = store.create(user, new(Domain::Home, "Water the plants", TaskKind::Household)).await;
+    store.complete(user, done.id, agent).await.expect("completed");
+
+    let facts = personal_productivity::facts(&MemoryService::in_memory(), &LedgerService::in_memory(), user).await;
+    let titles: Vec<&str> = facts.tasks.iter().map(|t| t.title.as_str()).collect();
+    assert_eq!(titles, vec!["Renew passport", "Book the dentist"], "home + shared, open only, most postponed first");
+    assert_eq!(facts.tasks[0].postponed, 2);
+    assert_eq!(facts.postponed_total, 2);
+    assert!(facts.tasks.iter().all(|t| t.source == SOURCE_STORE && t.known));
+
+    // The agent gets the five task tools behind the gate, scoped to home; no MCP tools leak in.
+    let inner: Arc<dyn adk_core::Toolset> = Arc::new(FakeInboxTools);
+    let ctx: Arc<dyn adk_core::ReadonlyContext> = Arc::new(adk_tool::SimpleToolContext::new("t"));
+    let toolset = spatial_os::agents::gemini::filtered_for_agent(agent, inner);
+    let names: Vec<String> = toolset.tools(ctx).await.unwrap().iter().map(|t| t.name().to_string()).collect();
+    for tool in TOOL_NAMES {
+        assert!(names.contains(&tool.to_string()), "{tool} missing: {names:?}");
+    }
+    assert!(!names.contains(&"create_draft".to_string()), "inbox tools must not reach the home agent");
+    assert_eq!(spatial_os::tools::allowlist::catalog().world_for(agent), Domain::Home);
+}
+
+#[tokio::test]
+async fn home_agents_keep_conservative_defaults_and_health_never_diagnoses() {
+    use spatial_os::agents::week::{health_escalation, health_lint, health_sanitize};
+    use spatial_os::domain::Domain;
+    use spatial_os::permissions::{Effect, Mode};
+    use spatial_os::tools::allowlist::AllowlistCatalog;
+
+    let catalog = AllowlistCatalog::from_file(&common::manifest_dir().join("mcp_allowlists.toml")).expect("catalog");
+    for id in spatial_os::worlds::home::phase1_agent_ids() {
+        if let Some(spec) = catalog.spec_for(id) {
+            assert_eq!(spec.world, Domain::Home, "{id} must be tagged home");
+        }
+    }
+    let money = catalog.spec_for("money_agent").expect("money");
+    assert_eq!(money.mode, Mode::Observe);
+    assert!(money.tools.values().all(|e| *e == Some(Effect::Read)), "finance has zero non-read tools");
+    for id in ["family_agent", "personal_social_agent"] {
+        assert!(catalog.spec_for(id).expect(id).tools.is_empty());
+    }
+    // Personal Productivity carries exactly the shared tasks toolset (S4-T3), nothing that sends or publishes.
+    let personal = catalog.spec_for("personal_productivity_agent").expect("personal_productivity_agent");
+    assert!(personal.mcp_servers.iter().any(|m| m == spatial_os::tools::tasks::TOOLSET_ID));
+    let mut names: Vec<&str> = personal.tools.keys().map(String::as_str).collect();
+    names.sort_unstable();
+    let mut expected = spatial_os::tools::tasks::TOOL_NAMES.to_vec();
+    expected.sort_unstable();
+    assert_eq!(names, expected);
+    assert!(personal.tools.values().all(|e| matches!(e, Some(Effect::Read) | Some(Effect::WriteLocal))), "{:?}", personal.tools);
+
+    let bad = "You have insomnia and a sleep disorder. Steps steady; avg sleep 4.6h.";
+    assert!(!health_lint(bad).is_empty());
+    let clean = health_sanitize(bad);
+    assert!(health_lint(&clean).is_empty() && clean.contains("Steps steady"), "{clean}");
+    assert!(health_escalation(4.6, 6).unwrap().contains("health professional"));
+    assert!(health_escalation(6.1, 6).is_none());
+    assert!(health_escalation(4.0, 2).is_none(), "needs at least five nights");
+
+    let fam = spatial_os::agents::family::build(spatial_os::memory::MemoryService::in_memory()).await.expect("family agent");
+    assert_eq!(fam.name(), "family_agent");
+    let social = spatial_os::agents::personal_social::build().await.expect("stub");
+    assert_eq!(social.name(), "personal_social_agent");
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 · S6 — agent bus and arbitration
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn bus_carries_requests_and_results_for_a_turn() {
+    use spatial_os::domain::Domain;
+    use spatial_os::mother::bus::{global, Kind};
+    use spatial_os::orchestrator::dispatch::{dispatch_intent, IntentDispatch};
+    use spatial_os::orchestrator::sse_collect::collect_sse_events;
+
+    let state = offline_app_state();
+    let rec = state.sessions.create_for_user("u-bus".into()).await;
+    let mut rx = global().subscribe();
+    let _ = collect_sse_events(dispatch_intent(IntentDispatch { state: &state, session_id: rec.session_id.clone(), user_id: rec.user_id.clone(), text: "What's happening with work?".into() }).await).await;
+    let mut msgs = Vec::new();
+    while let Ok(m) = rx.try_recv() {
+        msgs.push(m);
+    }
+    let trace = msgs.iter().find(|m| m.kind == Kind::Result && m.from.agent == "work_mother").map(|m| m.trace_id.clone()).expect("work_mother result");
+    let turn = global().trace(&trace);
+    assert!(turn.iter().all(|m| m.trace_id == trace));
+    assert!(turn.iter().any(|m| m.kind == Kind::Request && m.from.agent == "mother" && m.to.agent == "work_mother" && m.depth == 1));
+    assert!(turn.iter().any(|m| m.kind == Kind::Request && m.from.agent == "work_mother" && m.depth == 2));
+    assert!(turn.iter().all(|m| m.depth <= spatial_os::mother::bus::MAX_DEPTH));
+    let result = turn.iter().find(|m| m.kind == Kind::Result).unwrap();
+    assert_eq!(result.domain, Domain::Shared);
+    assert!(result.payload["facts"].as_array().unwrap().iter().any(|f| f.as_str().unwrap().contains("work agents ran")));
+}
+
+#[tokio::test]
+async fn arbitration_asks_one_question_for_a_work_home_overlap() {
+    use spatial_os::orchestrator::dispatch::{dispatch_intent, IntentDispatch};
+    use spatial_os::orchestrator::sse_collect::collect_sse_events;
+
+    let state = offline_app_state();
+    let rec = state.sessions.create_for_user("u-arb".into()).await;
+    let run = |text: &str| {
+        let state = state.clone();
+        let (sid, uid, text) = (rec.session_id.clone(), rec.user_id.clone(), text.to_string());
+        async move { collect_sse_events(dispatch_intent(IntentDispatch { state: &state, session_id: sid, user_id: uid, text }).await).await }
+    };
+    run("Remember family dinner Thursday at 18:30").await;
+    run("Remember the client review is Thursday 17:30-19:00").await;
+
+    let events = run("I'm overwhelmed. Help me reorganize today.").await;
+    let summary = events.iter().find(|e| e["type"] == "suzy_summary").unwrap()["html"].as_str().unwrap();
+    assert!(summary.starts_with("You have a family commitment thursday at 18:30, but your current work schedule extends into that period"), "{summary}");
+    assert_eq!(summary.matches("Would you like me to help reorganize").count(), 1, "exactly one question");
+    assert!(!summary.contains("should") && !summary.contains("too much"), "neutral wording");
+    let first_suggest = events.iter().find(|e| e["type"] == "suggest").unwrap();
+    assert!(first_suggest["text"].as_str().unwrap().starts_with("💡 Reorganize my tasks"));
+
+    state.ledger.flush().await;
+    let conflicts = state.ledger.query(&spatial_os::intelligence::LedgerQuery { user_id: rec.user_id.clone(), kind: Some("conflict".into()), ..Default::default() }).await;
+    assert_eq!(conflicts.len(), 1);
+    assert!(conflicts[0].trace_id.is_some());
+    assert!(!serde_json::to_string(&conflicts).unwrap().contains("client review"), "ledger carries counts, not commitments");
 }

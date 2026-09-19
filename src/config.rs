@@ -40,10 +40,13 @@ pub struct AppConfig {
     pub linkedin_partner_id: Option<String>,
     pub linkedin_conversion_id: Option<u64>,
     pub allow_demo_mode: bool,
+    /// `ZAVORA_CAMERA` (default on): camera frames over the voice websocket when voice is enabled.
+    pub camera_enabled: bool,
 }
 
 impl AppConfig {
     pub fn from_env() -> Result<Self> {
+        dotenvy::from_filename(".env.local").ok(); // local overrides, git-ignored
         dotenvy::dotenv().ok();
 
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -85,7 +88,7 @@ impl AppConfig {
             mcp_slides_path: resolve_path(
                 &manifest_dir,
                 "MCP_SLIDES_PATH",
-                "../mcp-servers/mcp_slides/target/release/slides-mcp-server",
+                "../mcp-servers/mcp-slides/target/release/slides-mcp-server",
             ),
             mcp_calendar_path: resolve_path(
                 &manifest_dir,
@@ -130,7 +133,7 @@ impl AppConfig {
             mcp_github_path: resolve_path(
                 &manifest_dir,
                 "MCP_GITHUB_PATH",
-                "../mcp-servers/mcp-github/target/release/mcp-github",
+                "../mcp-servers/mcp-github/target/release/adk-mcp-github",
             ),
             mcp_maps_path: resolve_path(
                 &manifest_dir,
@@ -146,7 +149,7 @@ impl AppConfig {
             gemini_model: std::env::var("GEMINI_MODEL")
                 .unwrap_or_else(|_| "gemini-3.1-flash-lite".into()),
             gemini_live_model: std::env::var("GEMINI_LIVE_MODEL").unwrap_or_else(|_| {
-                "models/gemini-live-2.5-flash-native-audio".into()
+                "models/gemini-3.8-live".into()
             }),
             voice_name: std::env::var("VOICE_NAME").unwrap_or_else(|_| "Aoede".into()),
             database_url: std::env::var("DATABASE_URL").ok().filter(|s| !s.is_empty()),
@@ -175,6 +178,9 @@ impl AppConfig {
             allow_demo_mode: std::env::var("ZAVORA_ALLOW_DEMO")
                 .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
                 .unwrap_or(false),
+            camera_enabled: std::env::var("ZAVORA_CAMERA")
+                .map(|v| !(v == "0" || v.eq_ignore_ascii_case("false")))
+                .unwrap_or(true),
         })
     }
 

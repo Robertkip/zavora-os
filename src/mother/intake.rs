@@ -112,6 +112,7 @@ pub fn scenario_agent(scenario: &str) -> (&'static str, &'static str) {
         "live" => ("entertainment", "headlines, markets and what is live now"),
         "lisbon" => ("travel", "flights, stay and itinerary"),
         "proactive" => ("research_knowledge", "what the background agents found"),
+        "home" => ("home", "family and personal life"),
         _ => ("mother", "handle the request"),
     }
 }
@@ -202,7 +203,7 @@ pub fn classify_rules(text: &str) -> Option<IntakeResult> {
             domains: vec![Domain::Work, Domain::Home],
             targets: vec![
                 t(Domain::Work, "productivity", "propose what to defer or move today", "morning"),
-                t(Domain::Home, "personal_productivity", "propose which personal tasks to move", "week"),
+                t(Domain::Home, "personal_productivity", "propose which personal tasks to move", "home"),
             ],
             kind: Kind::Action,
             urgency: Urgency::High,
@@ -225,9 +226,13 @@ pub fn classify_rules(text: &str) -> Option<IntakeResult> {
     if has_any(&l, &["family commitment", "family event", "family plans", "remind me about family", "what's happening at home", "whats happening at home", "home commitments"]) {
         return Some(mk(
             vec![Domain::Home],
-            vec![t(Domain::Home, "family", "family commitments and important dates", "people")],
+            vec![t(Domain::Home, "family", "family commitments and important dates", "home")],
             Kind::Question,
         ));
+    }
+    // Personal tasks and errands — home world, native card.
+    if has_any(&l, &["my personal tasks", "my errands", "personal to-do", "personal todo", "what do i need to do at home", "household tasks"]) {
+        return Some(mk(vec![Domain::Home], vec![t(Domain::Home, "personal_productivity", "personal tasks and errands", "home")], kind));
     }
     // Reading & knowledge.
     if has_any(&l, &["been reading", "what have i read", "my reading", "what am i learning", "reading lately"]) {

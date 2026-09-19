@@ -77,8 +77,14 @@ pub fn structure_statement(text: &str) -> (Domain, &'static str, String, serde_j
     if l.contains("protect") && (l.contains("evening") || l.contains("weekend")) {
         return (Domain::Home, "preference", "preference.protected_time".into(), serde_json::json!(clean), Sensitivity::Normal);
     }
-    if l.contains("birthday") {
-        return (Domain::Home, "date", format!("date.birthday.{}", slug(&clean)), serde_json::json!(clean), Sensitivity::Normal);
+    if l.contains("birthday") || l.contains("anniversary") {
+        let (name, label) = crate::agents::family::parse_person_and_label(&clean);
+        return (Domain::Home, "date", format!("date.{label}.{}", slug(&name)), serde_json::json!(clean), Sensitivity::Normal);
+    }
+    if let Some(task) = l.strip_prefix("to ").or_else(|| l.strip_prefix("i need to ")).or_else(|| l.strip_prefix("i have to ")) {
+        let task_text = clean[clean.len() - task.len()..].trim().to_string();
+        let domain = if has_work_words(&l) { Domain::Work } else { Domain::Home };
+        return (domain, "task", format!("task.{}", slug(&task_text)), serde_json::json!(task_text), Sensitivity::Normal);
     }
     let sensitivity = if l.contains("health") || l.contains("medication") || l.contains("doctor") || l.contains("sleep") {
         Sensitivity::Health
@@ -95,6 +101,10 @@ pub fn structure_statement(text: &str) -> (Domain, &'static str, String, serde_j
         Domain::Shared
     };
     (domain, "context", format!("context.{}", slug(&clean)), serde_json::json!(clean), sensitivity)
+}
+
+fn has_work_words(l: &str) -> bool {
+    ["work", "meeting", "boss", "client", "project", "deck", "report", "colleague"].iter().any(|w| l.contains(w))
 }
 
 fn title(s: &str) -> String {
@@ -114,13 +124,14 @@ fn title(s: &str) -> String {
 pub async fn try_handle(memory: &MemoryService, user_id: &str, session_id: &str, text: &str) -> Option<MemoryReply> {
     let l = text.trim().to_lowercase();
 
-    for prefix in ["remember that ", "remember: ", "remember ", "please remember that ", "please remember "] {
+    for prefix in ["remind me to ", "remember that ", "remember: ", "remember ", "please remember that ", "please remember "] {
         if let Some(rest) = text.trim().get(prefix.len()..).filter(|_| l.starts_with(prefix)) {
             let rest = rest.trim();
             if rest.is_empty() {
                 return Some(MemoryReply::Nothing("What should I remember?"));
             }
-            let (domain, category, key, value, sensitivity) = structure_statement(rest);
+            let statement = if l.starts_with("remind me to ") { format!("to {rest}") } else { rest.to_string() };
+            let (domain, category, key, value, sensitivity) = structure_statement(&statement);
             let item = memory
                 .remember(
                     user_id,

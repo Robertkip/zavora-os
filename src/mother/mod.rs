@@ -7,11 +7,15 @@
 //!   persists the cards, and streams one field.
 //! - [`synth`] composes one answer in Suzy's voice with mode-tagged actions.
 //! - [`agent`] is the LLM half (internal tools only; no MCP).
+//! - [`bus`] carries `AgentMessage`s between the Mother and the worlds (trace ids, depth cap).
+//! - [`arbitrate`] dedupes proposals and turns a work/home clash into one neutral question.
 //!
 //! Every entry point (intent route, chat route, voice tools, `/awp/a2a`) calls
 //! [`handle_intent`].
 
 pub mod agent;
+pub mod arbitrate;
+pub mod bus;
 pub mod delegate;
 pub mod intake;
 pub mod synth;

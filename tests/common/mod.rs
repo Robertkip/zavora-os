@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 pub fn load_env() {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let _ = dotenvy::from_filename(manifest.join(".env.local"));
     let _ = dotenvy::from_filename(manifest.join(".env"));
     dotenvy::dotenv().ok();
 }
@@ -23,7 +24,7 @@ pub fn mcp_paths() -> McpPaths {
     McpPaths {
         worksheet: m.join("../mcp-servers/worksheet-mcp/target/release/excel-mcp-server"),
         docx: m.join("../mcp-servers/docx-mcp/target/release/docx-mcp-server"),
-        slides: m.join("../mcp-servers/mcp_slides/target/release/slides-mcp-server"),
+        slides: m.join("../mcp-servers/mcp-slides/target/release/slides-mcp-server"),
         news: m.join("../mcp-servers/mcp-news/target/release/mcp-news"),
         weather: m.join("../mcp-servers/mcp-weather/target/release/mcp-weather"),
     }

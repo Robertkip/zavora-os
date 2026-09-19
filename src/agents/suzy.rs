@@ -104,6 +104,7 @@ pub async fn summarize(
         "Summarize this completed session for the user:\n\n{context}\n\nWrite the HTML summary now."
     );
 
+    crate::agents::ensure_runner_session(runner, user_id, session_id).await;
     let mut stream = runner
         .run(
             UserId::try_from(user_id)?,

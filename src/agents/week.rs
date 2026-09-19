@@ -44,6 +44,35 @@ fn health_agent(csv_path: Option<std::path::PathBuf>) -> anyhow::Result<Arc<dyn 
     )
 }
 
+/// Vocabulary the Health & Wellness agent must never use: it organizes and escalates, it does not
+/// diagnose (concept §5, PROGRESS.md S5-T7).
+pub const DIAGNOSIS_WORDS: &[&str] = &[
+    "diagnos", "disorder", "insomnia", "depress", "anxiety disorder", "you have a", "you suffer",
+    "syndrome", "deficien", "disease", "chronic", "prescri", "medical condition", "clinically",
+];
+
+/// Diagnosis words present in `text` (lint for prompts, outputs and tests).
+pub fn health_lint(text: &str) -> Vec<&'static str> {
+    let l = text.to_lowercase();
+    DIAGNOSIS_WORDS.iter().copied().filter(|w| l.contains(w)).collect()
+}
+
+/// Drop sentences that contain diagnosis vocabulary; keep the rest.
+pub fn health_sanitize(text: &str) -> String {
+    text.split_inclusive(['.', ';', '\n'])
+        .filter(|sentence| health_lint(sentence).is_empty())
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
+/// Escalation to a human professional when a threshold is crossed (never a diagnosis).
+pub fn health_escalation(avg_sleep_h: f64, nights: usize) -> Option<String> {
+    (nights >= 5 && avg_sleep_h < 5.0).then(|| {
+        format!("Sleep has averaged {avg_sleep_h:.1} h over {nights} nights — consider speaking with a health professional.")
+    })
+}
+
 fn summarize_health_csv(csv: &str) -> String {
     let mut sleep_hours = Vec::new();
     let mut steps = 0u64;
@@ -68,10 +97,12 @@ fn summarize_health_csv(csv: &str) -> String {
     } else {
         sleep_hours.iter().sum::<f64>() / sleep_hours.len() as f64
     };
-    format!(
-        "avg sleep {avg:.1}h · steps {steps} · imported from {}",
-        "health.csv"
-    )
+    let mut out = format!("avg sleep {avg:.1}h · steps {steps} · imported from health.csv");
+    if let Some(e) = health_escalation(avg, sleep_hours.len()) {
+        out.push_str(" · ");
+        out.push_str(&e);
+    }
+    health_sanitize(&out)
 }
 
 async fn money_agent(

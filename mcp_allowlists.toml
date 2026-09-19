@@ -390,3 +390,64 @@ tools = ["search_properties_nearby", "geocode_search"]
 [allowlist.effects]
 search_properties_nearby = "read"
 geocode_search = "read"
+
+# --- Phase 2 · S4 work agents without an MCP server yet (labeled stubs, BK-101) ---
+
+[[allowlist]]
+agent = "career_agent"
+world = "work"
+mode = "observe"
+mcp_server = "none"
+reason = "Career — labeled stub until a career/network MCP exists"
+tools = []
+
+[allowlist.effects]
+
+[[allowlist]]
+agent = "professional_social_agent"
+world = "work"
+mode = "observe"
+mcp_server = "none"
+reason = "Professional social media — labeled stub until a LinkedIn MCP exists"
+tools = []
+
+[allowlist.effects]
+
+# --- Phase 2 · S5 home agents without an MCP server (native from memory/ledger or labeled stubs) ---
+
+[[allowlist]]
+agent = "family_agent"
+world = "home"
+mode = "observe"
+mcp_server = "none"
+reason = "Family — dates from memory and contacts CSV until the contacts table (009)"
+tools = []
+
+[allowlist.effects]
+
+# Built-in tasks toolset (S4-T3), the home-world counterpart of the `calendar_agent` entry:
+# scoped to home + shared tasks by `world`, gated like every other tool.
+[[allowlist]]
+agent = "personal_productivity_agent"
+world = "home"
+mode = "suggest"
+mcp_server = "tasks"
+reason = "Personal productivity — errands, reminders, household tasks and a day plan from the shared tasks store"
+tools = ["create_task", "list_tasks", "postpone_task", "complete_task", "plan_day"]
+
+[allowlist.effects]
+create_task = "write_local"
+list_tasks = "read"
+postpone_task = "write_local"
+complete_task = "write_local"
+plan_day = "read"
+
+[[allowlist]]
+agent = "personal_social_agent"
+world = "home"
+mode = "observe"
+mcp_server = "none"
+reason = "Personal social media — labeled stub until social MCPs exist (BK-102)"
+tools = []
+
+[allowlist.effects]

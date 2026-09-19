@@ -1,4 +1,6 @@
-//! WebSocket voice streaming — mic PCM in, Suzy PCM out.
+//! WebSocket voice streaming — mic PCM in, Suzy PCM out; with the camera channel on, JSON
+//! `frame` messages in (forwarded to the model, never stored or logged) and `ui_gesture` tool
+//! calls out (M10-T5, `crate::voice::camera`).
 
 use axum::{
     extract::{Query, State, WebSocketUpgrade, ws},
@@ -21,6 +23,8 @@ pub struct VoiceStatus {
     pub ws_path: &'static str,
     pub input_rate_hz: u32,
     pub output_rate_hz: u32,
+    /// Camera channel available on this websocket (`ZAVORA_CAMERA`, needs voice).
+    pub camera: bool,
 }
 
 pub async fn status(State(state): State<AppState>) -> Json<VoiceStatus> {
@@ -29,6 +33,7 @@ pub async fn status(State(state): State<AppState>) -> Json<VoiceStatus> {
         ws_path: "/ws/voice",
         input_rate_hz: 16_000,
         output_rate_hz: 24_000,
+        camera: state.voice.camera,
     })
 }
 
@@ -63,7 +68,7 @@ async fn handle_voice_ws(socket: ws::WebSocket, state: AppState, session_id: Opt
 
     let (mut ws_sender, mut ws_receiver) = socket.split();
 
-    let runner = match crate::voice::realtime::build_suzy_runner(&state, session_id).await {
+    let runner = match crate::voice::realtime::build_suzy_runner(&state, session_id.clone()).await {
         Ok(r) => std::sync::Arc::new(r),
         Err(e) => {
             error!("voice runner init failed: {e:#}");
@@ -91,11 +96,20 @@ async fn handle_voice_ws(socket: ws::WebSocket, state: AppState, session_id: Opt
     }
 
     info!("Gemini Live voice session connected");
+    // The UI session this voice session belongs to — the id the client keeps and submits intents
+    // with. The realtime runner has an id of its own that is not a UI session; sending that as
+    // `session_id` made every intent raised from voice (submit_intent, camera gestures) a 404.
+    let ui_session_id = match session_id.as_deref() {
+        Some(sid) if state.sessions.get(sid).await.is_some() => sid.to_string(),
+        _ => state.sessions.create().await.session_id,
+    };
     let _ = ws_sender
         .send(ws::Message::Text(
             serde_json::json!({
                 "type": "connected",
-                "session_id": runner.session_id().await
+                "session_id": ui_session_id,
+                "runner_session_id": runner.session_id().await,
+                "camera": state.voice.camera
             })
             .to_string()
             .into(),
@@ -105,6 +119,8 @@ async fn handle_voice_ws(socket: ws::WebSocket, state: AppState, session_id: Opt
     let (tx, mut rx) = mpsc::channel::<ws::Message>(64);
 
     let runner_send = runner.clone();
+    let mut frame_gate = crate::voice::camera::FrameGate::new(state.voice.camera);
+    let tx_frames = tx.clone();
     let send_handle = tokio::spawn(async move {
         while let Some(Ok(msg)) = ws_receiver.next().await {
             match msg {
@@ -134,6 +150,28 @@ async fn handle_voice_ws(socket: ws::WebSocket, state: AppState, session_id: Opt
                             Some("interrupt") => {
                                 let _ = runner_send.interrupt().await;
                             }
+                            Some("frame") => {
+                                // Camera frame: admit, forward, forget. The payload is never logged.
+                                let mime = msg.get("mime").and_then(|m| m.as_str()).unwrap_or("");
+                                let data = msg.get("data").and_then(|d| d.as_str()).unwrap_or("");
+                                match frame_gate.check(mime, data, std::time::Instant::now()) {
+                                    Ok(()) => {
+                                        if runner_send.send_video_frame(mime, data).await.is_err() {
+                                            break;
+                                        }
+                                    }
+                                    Err(crate::voice::camera::FrameReject::TooFast) => {}
+                                    Err(reason) => {
+                                        let _ = tx_frames
+                                            .send(ws::Message::Text(
+                                                serde_json::json!({"type": "frame_rejected", "reason": reason.as_str()})
+                                                    .to_string()
+                                                    .into(),
+                                            ))
+                                            .await;
+                                    }
+                                }
+                            }
                             _ => {}
                         }
                     }
@@ -141,6 +179,9 @@ async fn handle_voice_ws(socket: ws::WebSocket, state: AppState, session_id: Opt
                 ws::Message::Close(_) => break,
                 _ => {}
             }
+        }
+        if frame_gate.accepted + frame_gate.rejected > 0 {
+            tracing::debug!(accepted = frame_gate.accepted, rejected = frame_gate.rejected, "camera frames relayed");
         }
     });
 

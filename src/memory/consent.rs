@@ -24,7 +24,7 @@ use crate::domain::Domain;
 
 /// Consent categories the OS asks for (concept §12.2). A consent is per category and world.
 pub const CATEGORIES: &[&str] = &[
-    "calendar", "email", "health", "finance", "social", "location", "reading", "routines",
+    "calendar", "email", "health", "finance", "social", "location", "reading", "routines", "camera",
 ];
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

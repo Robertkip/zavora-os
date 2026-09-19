@@ -7,7 +7,6 @@
 //! cards into one field, persists the merged cards, and closes with one Suzy synthesis.
 
 use std::convert::Infallible;
-use std::time::Duration;
 
 use axum::response::sse::Sse;
 use axum::response::{IntoResponse, Response};
@@ -18,7 +17,7 @@ use crate::domain::Domain;
 use crate::events::sse::{to_event, FieldEvent};
 use crate::mother::intake::{self, IntakeResult, Target};
 use crate::mother::synth::{self, CardOutcome, TargetResult};
-use crate::orchestrator::{dispatch, persist, sse_collect};
+use crate::orchestrator::{dispatch, persist};
 use crate::scenarios::tour;
 use crate::state::AppState;
 
@@ -50,10 +49,7 @@ pub struct MotherRequest<'a> {
     pub entry: Entry,
 }
 
-/// Per-target fan-out budget. Mock scenarios finish in a few seconds; live MCP workflows can
-/// take longer, so the budget is generous and a timed-out target still contributes its
-/// partial cards.
-pub const TARGET_TIMEOUT: Duration = Duration::from_secs(90);
+pub use crate::worlds::TARGET_TIMEOUT;
 
 /// The Mother Agent's runtime pipeline for one utterance.
 pub async fn handle_intent(req: MotherRequest<'_>) -> Response {
@@ -120,12 +116,16 @@ pub async fn handle_intent(req: MotherRequest<'_>) -> Response {
         return dispatch::stream_clarify(msg);
     }
 
+    // A single Phase 1 scenario streams live, unchanged (the demo tour). A single world-native
+    // target (Family, Personal…) has no Phase 1 stream and goes through its world's fold.
     if !intake.is_multi_target() {
         let scenario = intake
             .primary_scenario()
             .unwrap_or_else(|| crate::events::mock::pick_scenario(&text))
             .to_string();
-        return dispatch::stream_scenario(state, &scenario, session_id, user_id, text, true).await;
+        if !crate::worlds::is_world_native(&scenario) {
+            return dispatch::stream_scenario(state, &scenario, session_id, user_id, text, true).await;
+        }
     }
 
     stream_multi_target(state, session_id, user_id, text, intake)
@@ -156,28 +156,23 @@ fn stream_multi_target(
 
     tokio::spawn(async move {
         let started = chrono::Utc::now();
+        let trace_id = crate::mother::bus::AgentBus::new_trace_id();
         let targets = intake.targets.clone();
-        let primary = intake.primary_scenario().unwrap_or("morning").to_string();
-
-        let mut collected: Vec<(Vec<serde_json::Value>, bool)> = Vec::with_capacity(targets.len());
-        let futures: Vec<_> = targets
+        let primary = intake
+            .targets
             .iter()
-            .map(|t| {
-                let state = state.clone();
-                let (sid, uid, txt, scenario) = (session_id.clone(), user_id.clone(), text.clone(), t.scenario.clone());
-                async move {
-                    let resp = dispatch::stream_scenario(&state, &scenario, sid, uid, txt, false).await;
-                    match tokio::time::timeout(TARGET_TIMEOUT, sse_collect::collect_sse_events(resp)).await {
-                        Ok(events) => (events, false),
-                        Err(_) => (Vec::new(), true),
-                    }
-                }
-            })
-            .collect();
-        for out in futures::future::join_all(futures).await {
-            collected.push(out);
-        }
+            .map(|t| t.scenario.as_str())
+            .find(|s| !crate::worlds::is_world_native(s))
+            .unwrap_or("people")
+            .to_string();
 
+        // Worlds with a mother fold their targets into one structured result (S4-T1).
+        let fan = crate::worlds::fan_out(&state, &session_id, &user_id, &text, targets, &trace_id).await;
+        let targets = fan.targets;
+        for w in [&fan.work, &fan.home].into_iter().flatten() {
+            tracing::info!(world = %w.world, agents = w.agents.len(), facts = w.facts.len(), stubs = w.stubs.len(), "world mother result");
+        }
+        let collected = fan.collected;
         let merged = merge_target_events(&targets, collected);
 
         // Persist the merged field under the primary scenario key.
@@ -212,7 +207,7 @@ fn stream_multi_target(
             .memory
             .notes_for(&user_id, crate::memory::Scope::MOTHER, 3)
             .await;
-        let synthesis = synth::compose(
+        let mut synthesis = synth::compose(
             state.suzy_runner.as_ref().filter(|_| state.coordinator_enabled),
             &user_id,
             &session_id,
@@ -222,6 +217,18 @@ fn stream_multi_target(
             &mode_for,
         )
         .await;
+        // Arbitration v1 (S6-T5): dedupe proposals; a work/home clash becomes one question.
+        let arb = crate::mother::arbitrate::review(&state.memory, &user_id, &mut synthesis).await;
+        if let Some(q) = &arb.question {
+            use crate::mother::bus::{global as bus, Address, AgentMessage, Kind};
+            let _ = bus().publish(AgentMessage::new(&trace_id, Address::new("arbitration", Domain::Shared), Address::mother(), Kind::Conflict, serde_json::json!({ "conflicts": arb.conflicts, "protected_violations": arb.protected_violations })));
+            state.ledger.record(
+                crate::intelligence::ledger::ActivityEvent::new(&user_id, Domain::Shared, "arbitration", "conflict")
+                    .meta(serde_json::json!({ "count": arb.conflicts + arb.protected_violations }))
+                    .trace(&trace_id),
+            );
+            tracing::info!(trace = %trace_id, "arbitration asked one question: {}", synth::strip_tags(q));
+        }
 
         state
             .sessions

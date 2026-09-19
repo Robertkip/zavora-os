@@ -225,6 +225,7 @@ pub fn stream_morning(
             }
         };
 
+        crate::agents::ensure_runner_session(&runner, &user_id, &session_id).await;
         let stream = match runner.run(uid, sid, content).await {
             Ok(s) => s,
             Err(e) => {

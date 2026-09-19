@@ -17,7 +17,7 @@ use crate::state::AppState;
 
 #[derive(Deserialize)]
 pub struct UiEvent {
-    /// ui_focus | ui_blur | ui_notification | ui_card_open | ui_lens
+    /// ui_focus | ui_blur | ui_notification | ui_card_open | ui_lens | ui_gesture
     pub kind: String,
     #[serde(default)]
     pub count: Option<u32>,
@@ -32,7 +32,7 @@ pub struct UiEventsBody {
     pub events: Vec<UiEvent>,
 }
 
-pub const UI_KINDS: &[&str] = &["ui_focus", "ui_blur", "ui_notification", "ui_card_open", "ui_lens"];
+pub const UI_KINDS: &[&str] = &["ui_focus", "ui_blur", "ui_notification", "ui_card_open", "ui_lens", "ui_gesture"];
 
 pub async fn record(
     State(state): State<AppState>,
