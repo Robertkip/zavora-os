@@ -543,6 +543,136 @@
     .flow-nav { display: none !important; }
   }
 
+  /* ---------- Phase 2 (ADR-002/003): life-domain colours + permission mode badges ---------- */
+  :root { --dom-work: #5b8cff; --dom-home: #3ddc97; }
+  .card.dom-work::before { background: linear-gradient(135deg, rgba(91,140,255,.55), transparent 40%, rgba(91,140,255,.30)); }
+  .card.dom-work .glyph { background: linear-gradient(135deg, rgba(91,140,255,.35), rgba(91,140,255,.18)); }
+  .card.dom-home::before { background: linear-gradient(135deg, rgba(61,220,151,.50), transparent 40%, rgba(61,220,151,.28)); }
+  .card.dom-home .glyph { background: linear-gradient(135deg, rgba(61,220,151,.32), rgba(61,220,151,.16)); }
+  .tile.dom-work .av { background: linear-gradient(135deg, rgba(91,140,255,.40), rgba(91,140,255,.20)); }
+  .tile.dom-home .av { background: linear-gradient(135deg, rgba(61,220,151,.38), rgba(61,220,151,.18)); }
+  .mode-badge { margin-left: 5px; font-size: 10px; opacity: .75; cursor: default; }
+
+  /* domain lens (S10-T2 pulled forward): view one world at a time; shared always shows */
+  .lens { position: fixed; top: 72px; left: 50%; transform: translateX(-50%); z-index: 36;
+    display: flex; gap: 3px; padding: 4px; border-radius: 999px;
+    background: var(--glass); border: 1px solid var(--stroke); backdrop-filter: blur(18px); }
+  .lens button { padding: 5px 14px; border-radius: 999px; border: none; background: none;
+    color: var(--muted); font-size: 11.5px; font-weight: 700; letter-spacing: .4px; cursor: pointer;
+    transition: all .25s var(--spring); }
+  .lens button:hover { color: var(--ink); }
+  .lens button.on { color: #fff; background: linear-gradient(120deg, var(--accent-a), #5b7cff); }
+  .lens button.on[data-lens="work"] { background: linear-gradient(120deg, #4a72e8, #5b8cff); }
+  .lens button.on[data-lens="home"] { background: linear-gradient(120deg, #1fae72, #3ddc97); }
+  /* two worlds, one life (§1.3): each world is a full window with its own theme.
+     Navigate by swipe, horizontal scroll, arrow keys or the pager. The whole app
+     themes through the :root vars, so a world retints everything it inherits. */
+  body[data-world="work"] { --accent-a: #5b8cff; --accent-b: #4ad0ff; --accent-c: #7c5cff; --bg0: #05080f; --bg1: #0a1430; }
+  body[data-world="home"] { --accent-a: #3ddc97; --accent-b: #ffd166; --accent-c: #ff9e64; --bg0: #070f0a; --bg1: #0d2016; }
+  body[data-world="work"] .b1 { background: radial-gradient(circle, rgba(70,110,255,.85), transparent 60%); }
+  body[data-world="work"] .b2 { background: radial-gradient(circle, rgba(60,180,255,.70), transparent 60%); }
+  body[data-world="work"] .b3 { background: radial-gradient(circle, rgba(124,92,255,.55), transparent 60%); }
+  body[data-world="home"] .b1 { background: radial-gradient(circle, rgba(61,220,151,.80), transparent 60%); }
+  body[data-world="home"] .b2 { background: radial-gradient(circle, rgba(255,209,102,.55), transparent 60%); }
+  body[data-world="home"] .b3 { background: radial-gradient(circle, rgba(255,158,100,.50), transparent 60%); }
+  body[data-world="work"] .card.dom-home, body[data-world="work"] .tile.dom-home,
+  body[data-world="home"] .card.dom-work, body[data-world="home"] .tile.dom-work { display: none; }
+  body[data-world="work"] .appr-row.dom-home, body[data-world="home"] .appr-row.dom-work { display: none; }
+  .world-title { position: fixed; top: 110px; left: 50%; transform: translateX(-50%); z-index: 36;
+    font-size: 10px; letter-spacing: 3px; text-transform: uppercase; font-weight: 800;
+    color: rgba(154,164,196,.55); pointer-events: none; }
+  .world-title[hidden] { display: none !important; }
+  @keyframes worldFromRight { from { opacity: 0; transform: translateX(5%); } to { opacity: 1; transform: none; } }
+  @keyframes worldFromLeft  { from { opacity: 0; transform: translateX(-5%); } to { opacity: 1; transform: none; } }
+  body.world-anim-l .stage, body.world-anim-l .rail { animation: worldFromRight .55s var(--spring); }
+  body.world-anim-r .stage, body.world-anim-r .rail { animation: worldFromLeft .55s var(--spring); }
+  @media (max-width: 640px) { .lens { top: 52px; } .world-title { top: 90px; } }
+
+  /* ---------- Phase 2 surface: launchers + panels (Mother chat S10-T3, approvals S10-T4) ---------- */
+  /* explicit display values below would defeat the hidden attribute without this */
+  .p2-launch[hidden], .p2-panel[hidden], .p2-count[hidden], .p2-mini[hidden], .lens[hidden] { display: none !important; }
+  .p2-launch { position: fixed; right: 18px; z-index: 55; width: 46px; height: 46px;
+    border-radius: 50%; border: 1px solid var(--stroke); background: var(--glass); color: var(--ink);
+    font-size: 18px; cursor: pointer; backdrop-filter: blur(18px); display: grid; place-items: center;
+    transition: all .25s var(--spring); }
+  .p2-launch:hover { background: rgba(255,255,255,.1); transform: scale(1.06); }
+  .p2-launch.chat { bottom: 18px; background: linear-gradient(135deg, rgba(255,126,182,.3), rgba(124,92,255,.3)); }
+  .p2-launch.appr { bottom: 74px; }
+  .p2-count { position: absolute; top: -4px; right: -4px; min-width: 17px; height: 17px; padding: 0 4px;
+    border-radius: 999px; background: linear-gradient(120deg, #ffb35a, #ff7eb6); color: #1a0e06;
+    font-size: 10px; font-weight: 800; display: grid; place-items: center; }
+  .p2-panel { position: fixed; right: 18px; bottom: 132px; z-index: 56; width: 340px; max-width: calc(100vw - 36px);
+    display: flex; flex-direction: column; max-height: min(520px, 62vh); border-radius: 18px;
+    background: var(--glass); border: 1px solid var(--stroke); backdrop-filter: blur(24px);
+    box-shadow: 0 30px 80px -30px rgba(0,0,0,.85); overflow: hidden; }
+  .p2-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px; font-size: 13px; font-weight: 700;
+    border-bottom: 1px solid var(--stroke); }
+  .p2-head span { flex: 1; }
+  .p2-x { background: none; border: none; color: var(--muted); font-size: 18px; cursor: pointer; }
+  .p2-x:hover { color: var(--ink); }
+  .p2-mini { padding: 4px 10px; border-radius: 999px; border: 1px solid var(--stroke); background: rgba(255,255,255,.05);
+    color: var(--ink); font-size: 11px; font-weight: 600; cursor: pointer; }
+  .p2-mini:hover { background: rgba(255,255,255,.12); }
+  .p2-list { flex: 1; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+  .p2-empty { font-size: 12px; color: rgba(154,164,196,.55); text-align: center; padding: 14px 6px; }
+  .chat-turn { max-width: 86%; padding: 9px 12px; border-radius: 14px; font-size: 13px; line-height: 1.5; }
+  .chat-turn.user { align-self: flex-end; background: linear-gradient(120deg, rgba(124,92,255,.35), rgba(91,124,255,.3));
+    border: 1px solid rgba(124,92,255,.35); }
+  .chat-turn.mother { align-self: flex-start; background: rgba(255,255,255,.05); border: 1px solid var(--stroke); color: #e7ebff; }
+  .chat-turn.mother b { color: #fff; }
+  .chat-turn.pending { color: var(--muted); font-style: italic; }
+  .chat-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chat-chip { padding: 6px 12px; border-radius: 999px; font-size: 11.5px; color: var(--muted);
+    background: rgba(255,255,255,.04); border: 1px solid var(--stroke); cursor: pointer; transition: all .2s ease; }
+  .chat-chip:hover { color: var(--ink); background: rgba(255,255,255,.1); }
+  .tdots { display: inline-flex; gap: 3px; padding: 3px 2px; }
+  .tdots i { width: 5px; height: 5px; border-radius: 50%; background: var(--muted); animation: tdot 1.2s ease-in-out infinite; }
+  .tdots i:nth-child(2) { animation-delay: .15s; } .tdots i:nth-child(3) { animation-delay: .3s; }
+  @keyframes tdot { 0%,100% { opacity: .25; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-3px); } }
+  .p2-inrow { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--stroke); }
+  .p2-inrow input { flex: 1; min-width: 0; background: rgba(255,255,255,.05); border: 1px solid var(--stroke);
+    border-radius: 12px; color: var(--ink); font-size: 16px; padding: 9px 12px; outline: none; }
+  .p2-inrow input:focus { border-color: rgba(124,92,255,.55); }
+  .p2-send { width: 38px; height: 38px; flex: none; border-radius: 50%; border: none; cursor: pointer;
+    background: linear-gradient(120deg, var(--accent-a), #5b7cff); color: #fff; font-size: 16px; }
+  /* approvals inbox (S10-T4) */
+  .appr-row { display: flex; flex-direction: column; gap: 7px; padding: 10px 12px; border-radius: 13px;
+    background: rgba(255,255,255,.04); border: 1px solid var(--stroke); font-size: 12.5px; }
+  .appr-row.dom-work { border-left: 3px solid var(--dom-work); }
+  .appr-row.dom-home { border-left: 3px solid var(--dom-home); }
+  .appr-meta { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; color: var(--muted); font-size: 11px; }
+  .appr-meta .agent-chip { color: var(--ink); font-weight: 650; }
+  .effect-chip { padding: 1px 7px; border-radius: 999px; font-size: 9.5px; font-weight: 800; letter-spacing: .5px;
+    text-transform: uppercase; background: rgba(255,170,80,.16); border: 1px solid rgba(255,180,90,.4); color: #ffd9a8; }
+  .effect-chip.read, .effect-chip.write_local { background: rgba(37,208,192,.14); border-color: rgba(37,208,192,.35); color: #9ef0e6; }
+  .appr-sum { color: #e7ebff; line-height: 1.45; }
+  .appr-when { margin-left: auto; }
+  .appr-btns { display: flex; gap: 7px; }
+  .appr-btns .btn { padding: 7px 10px; font-size: 12px; flex: none; }
+  .appr-btns .btn.approve { flex: 1; }
+  .appr-row.appr-out { transform: translateX(60px); opacity: 0; transition: all .3s var(--spring); }
+  .appr-divider { margin-top: 4px; padding-top: 10px; border-top: 1px solid var(--stroke);
+    font-size: 10px; letter-spacing: 1.6px; text-transform: uppercase; color: rgba(154,164,196,.6); font-weight: 700; }
+  .audit-row { display: flex; gap: 8px; align-items: baseline; font-size: 11.5px; color: var(--muted); padding: 2px 0; }
+  .audit-row .ic { flex: none; }
+  .audit-row .sum { color: #cdd5f0; }
+  .audit-row .when { margin-left: auto; font-size: 10px; flex: none; }
+  .p2-launch.pulse::after { content: ''; position: absolute; inset: -4px; border-radius: 50%;
+    border: 2px solid rgba(255,179,90,.7); animation: ring 1.2s ease-out 2; }
+  .p2-toasts { position: fixed; right: 76px; bottom: 20px; z-index: 57; display: flex;
+    flex-direction: column-reverse; gap: 8px; pointer-events: none; align-items: flex-end; }
+  .p2-toast { padding: 10px 14px; border-radius: 12px; background: var(--glass); border: 1px solid var(--stroke);
+    backdrop-filter: blur(18px); font-size: 12.5px; color: #e7ebff; max-width: 320px;
+    box-shadow: 0 16px 40px -18px rgba(0,0,0,.8); animation: rise .3s var(--spring); }
+
+  @media (max-width: 640px) {
+    .p2-launch { right: 12px; width: 42px; height: 42px; }
+    .p2-launch.chat { bottom: 158px; }
+    .p2-launch.appr { bottom: 208px; }
+    .p2-panel { right: 12px; left: 12px; width: auto; bottom: 208px; max-height: 48vh; }
+    .p2-toasts { right: 62px; bottom: 160px; }
+  }
+
   /* tiny phones */
   @media (max-width: 380px) {
     .detail .trays { grid-template-columns: 1fr; }
@@ -648,7 +778,35 @@
 
   <div class="origin" id="origin"><span class="dot"></span><span>From your intent &nbsp;·&nbsp; <b id="originText"></b></span></div>
 
+  <!-- worlds pager (S10-T2 pulled forward) — swipe / scroll / arrows / click; behaviour in /static/lens.js -->
+  <div class="lens" id="lensCtl" hidden role="group" aria-label="World pager">
+    <button type="button" data-lens="work">‹ Work</button>
+    <button type="button" data-lens="both" class="on">Both</button>
+    <button type="button" data-lens="home">Home ›</button>
+  </div>
+  <div class="world-title" id="worldTitle" hidden></div>
+
   <div class="suzy" id="suzy"><div class="face" id="suzyFace">✦</div><div class="text" id="suzyText"></div></div>
+
+  <!-- Phase 2 surface (live mode only) — behaviour in /static/mother-chat.js + /static/approvals.js -->
+  <div class="p2-toasts" id="p2Toasts" role="status" aria-live="polite"></div>
+  <button class="p2-launch appr" id="apprOpen" hidden title="Pending approvals" aria-label="Pending approvals">✓<span class="p2-count" id="apprCount" hidden></span></button>
+  <div class="p2-panel" id="apprPanel" hidden>
+    <div class="p2-head"><span>Pending approvals</span>
+      <button class="p2-mini" id="apprAll" hidden>Approve all</button>
+      <button class="p2-x" id="apprRefresh" title="Refresh" aria-label="Refresh approvals">↻</button>
+      <button class="p2-x" id="apprClose" aria-label="Close approvals">×</button></div>
+    <div class="p2-list" id="apprList"></div>
+  </div>
+  <button class="p2-launch chat" id="chatOpen" hidden title="Chat with Suzy" aria-label="Chat with Suzy">✦</button>
+  <div class="p2-panel" id="chatPanel" hidden>
+    <div class="p2-head"><span>✦ Suzy — Mother Agent</span><button class="p2-x" id="chatClose" aria-label="Close chat">×</button></div>
+    <div class="p2-list" id="chatList"></div>
+    <form class="p2-inrow" id="chatForm">
+      <input id="chatText" placeholder="Ask or tell Suzy anything…" autocomplete="off" aria-label="Chat message" />
+      <button class="p2-send" type="submit" aria-label="Send">↑</button>
+    </form>
+  </div>
 
   <div class="stage">
     <div class="field"><div class="cards" id="cards"></div></div>
@@ -935,9 +1093,56 @@ function launch(text){
   });
 }
 
+// ---------- Phase 2 (S4-T8): domain colour + permission mode badge ----------
+// Modes arrive from GET /api/permissions (field-client.js sets window.__ZAVORA_MODES__).
+// Badges render only for agents we can match to an allowlist id — never guessed.
+const MODE_BADGES = {
+  observe:  { icon: '👁', label: 'Observe — reads and reports only' },
+  suggest:  { icon: '💡', label: 'Suggest — prepares actions for your approval' },
+  automate: { icon: '⚡', label: 'Automate — runs approved recipes' },
+};
+// Card specs use display agent names (calendar.agent); permissions use allowlist ids
+// (calendar_agent). Shim until S4 re-homing aligns the ids.
+const AGENT_ALLOWLIST_IDS = {
+  'auto-excel': 'excel_agent', 'auto-docs': 'docs_agent', 'auto-slides': 'slides_agent',
+  'people.agent': 'priya_agent', 'crm.agent': 'connections_agent',
+  'finance.agent': 'money_agent', 'work.agent': 'focus_agent', 'live.agent': 'now_agent',
+};
+function allowlistIdFor(agent, title){
+  if (!agent) return null;
+  const modes = window.__ZAVORA_MODES__ || {};
+  if (agent === 'news.agent') return title === 'Headlines' ? 'headlines_agent' : 'brief_agent';
+  if (AGENT_ALLOWLIST_IDS[agent]) return AGENT_ALLOWLIST_IDS[agent];
+  const guess = agent.replace(/\.agent$/, '') + '_agent';
+  if (modes[guess]) return guess;
+  return modes[agent] ? agent : null;
+}
+function applyModeBadge(el, agent, title){
+  const modes = window.__ZAVORA_MODES__;
+  if (!modes) return;
+  const id = allowlistIdFor(agent, title);
+  const badge = id && MODE_BADGES[modes[id]];
+  if (!badge) return;
+  const host = el.querySelector('.agent') || el.querySelector('.who');
+  if (!host || host.querySelector('.mode-badge')) return;
+  const b = document.createElement('span');
+  b.className = 'mode-badge';
+  b.textContent = badge.icon;
+  b.title = badge.label;
+  host.appendChild(b);
+}
+function applyModeBadges(){
+  document.querySelectorAll('.card, .tile').forEach((el) =>
+    applyModeBadge(el, el.dataset.agent, el.dataset.title));
+}
+
 function buildCard(s){
   const el = document.createElement('div');
   el.className = 'card' + (s.attention ? ' attention' : '') + (s.surface ? ' surface' : '');
+  if (s.domain === 'work' || s.domain === 'home') el.classList.add('dom-' + s.domain);
+  el.dataset.domain = s.domain || 'shared';
+  el.dataset.agent = s.agent || '';
+  el.dataset.title = s.title || '';
   el.dataset.depth = (Math.random()*1.4 + .6).toFixed(2);
   el.innerHTML = `
     <div class="pill">● Act now</div>
@@ -956,6 +1161,7 @@ function buildCard(s){
   const status = el.querySelector('.status');
   const stText = el.querySelector('.st');
 
+  applyModeBadge(el, s.agent, s.title);
   attachVerbs({ el, body, act, status, stText });
   return { el, body, act, status, stText };
 }
@@ -1278,6 +1484,7 @@ const suzyFace = document.getElementById('suzyFace');
 
 function showSuzy(){
   const html = suzySummaries[currentKey];
+  if (!html) return;   // live scenarios outside the demo tour stream their own suzy_summary
   suzyText.innerHTML = html;
   suzy.classList.add('show');
   speak(suzyText.textContent);
@@ -1794,7 +2001,10 @@ function agentActive(s){
   clearEmpty(activeEl);
   const t = document.createElement('div');
   t.className = 'tile agent-tile'; t.dataset.id = id;
+  if (s.domain === 'work' || s.domain === 'home') t.classList.add('dom-' + s.domain);
+  t.dataset.agent = s.agent || ''; t.dataset.title = s.title || '';
   t.innerHTML = `<div class="spin"></div><div class="who">${s.title}<small>${id}</small></div>`;
+  applyModeBadge(t, s.agent, s.title);
   activeEl.appendChild(t); active.set(id, { tile:t, spec:s });
 }
 function agentDone(s){
@@ -1812,7 +2022,9 @@ function snoozeAgent(title){
   clearEmpty(restingEl);
   const t = document.createElement('div');
   t.className = 'tile resting'; t.dataset.id = id;
+  t.dataset.agent = spec.agent || ''; t.dataset.title = spec.title || '';
   t.innerHTML = `<div class="av">${spec.glyph}</div><div class="who">${spec.title}<small>snoozed</small></div><span class="zzz">z</span>`;
+  applyModeBadge(t, spec.agent, spec.title);
   t.addEventListener('click', () => wakeAgent(id, spec));
   restingEl.appendChild(t); resting.set(id, spec);
   sfx('snooze');
@@ -1839,6 +2051,7 @@ function hydrateField(payload){
   resetAgents();
   cards.forEach((entry) => {
     const spec = entry.card || entry;
+    if (entry.domain && !spec.domain) spec.domain = entry.domain;
     const built = buildCard(spec);
     built.el.dataset.title = spec.title || '';
     cardsEl.appendChild(built.el);
@@ -1864,7 +2077,9 @@ function hydrateAgents(payload){
     const t = document.createElement('div');
     t.className = 'tile resting';
     t.dataset.id = id;
+    t.dataset.agent = spec.agent || ''; t.dataset.title = spec.title || '';
     t.innerHTML = `<div class="av">${spec.glyph}</div><div class="who">${spec.title}<small>snoozed</small></div><span class="zzz">z</span>`;
+    applyModeBadge(t, spec.agent, spec.title);
     t.addEventListener('click', () => wakeAgent(id, spec));
     restingEl.appendChild(t);
     resting.set(id, spec);
@@ -2284,6 +2499,7 @@ window.__ZAVORA_UI__ = {
   setCurrentKey(v) { currentKey = v; },
   setResolvedCount(v) { resolvedCount = v; },
   setTotalCards(v) { totalCards = v; },
+  applyModeBadges,
   armSuggestion,
   showSuzyCustom(html, audioClip) {
     suzyText.innerHTML = html;
@@ -2304,5 +2520,8 @@ submitIntent = function (text) {
 </script>
 <script src="/static/live-voice.js"></script>
 <script src="/static/field-client.js"></script>
+<script src="/static/lens.js"></script>
+<script src="/static/approvals.js"></script>
+<script src="/static/mother-chat.js"></script>
 </body>
 </html>

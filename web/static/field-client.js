@@ -54,9 +54,90 @@
       }
       cardsData.cards.forEach((entry, i) => {
         const spec = entry.card || entry;
+        if (entry.domain && !spec.domain) spec.domain = entry.domain;
         cards.set(entry.index ?? i, { spec, card: { el: null } });
       });
       return true;
+    }
+
+    // S2-T2: content-free UI signals for the activity ledger. Counts, domains and
+    // durations only — never titles, text or anything the user is looking at.
+    const uiQueue = [];
+    const cardOpenTs = new WeakMap();
+    let focusedSince = document.hasFocus() ? Date.now() : null;
+
+    function queueUiEvent(kind, extra) {
+      uiQueue.push(Object.assign({ kind }, extra || {}));
+      if (uiQueue.length >= 40) flushUiEvents();
+    }
+
+    function flushUiEvents(unloading) {
+      if (!sessionId || !uiQueue.length) return;
+      const body = JSON.stringify({ events: uiQueue.splice(0, 200) });
+      const url = `/api/sessions/${sessionId}/events`;
+      try {
+        if (unloading && navigator.sendBeacon) {
+          navigator.sendBeacon(url, new Blob([body], { type: 'application/json' }));
+          return;
+        }
+        fetch(url, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body,
+          keepalive: !!unloading,
+        }).catch(() => {});
+      } catch (_) {
+        /* telemetry must never break the UI */
+      }
+    }
+
+    function wireUiSignals() {
+      window.addEventListener('focus', () => {
+        focusedSince = Date.now();
+        queueUiEvent('ui_focus');
+      });
+      window.addEventListener('blur', () => {
+        const spent = focusedSince ? Date.now() - focusedSince : null;
+        focusedSince = null;
+        queueUiEvent('ui_blur', spent ? { duration_ms: spent } : {});
+      });
+      document.addEventListener('click', (e) => {
+        const card = e.target.closest && e.target.closest('.card');
+        if (!card) return;
+        const now = Date.now();
+        if ((cardOpenTs.get(card) || 0) + 5000 > now) return; // dedupe drag/click bursts
+        cardOpenTs.set(card, now);
+        queueUiEvent('ui_card_open', { domain: card.dataset.domain || 'shared' });
+      });
+      window.addEventListener('zavora:field-event', (e) => {
+        const t = e.detail && e.detail.type;
+        if (t === 'suzy_summary' || t === 'permission_request') queueUiEvent('ui_notification');
+      });
+      setInterval(() => flushUiEvents(), 20000);
+      window.addEventListener('pagehide', () => flushUiEvents(true));
+    }
+
+    // S4-T8: per-agent authority modes for the badge layer. Anonymous sessions get a
+    // 401/403 from the "known"-level route — badges simply stay off (no fabricated modes).
+    async function fetchModes() {
+      if (!sessionId) return;
+      try {
+        const res = await fetch(
+          `/api/permissions?session_id=${encodeURIComponent(sessionId)}`,
+          { credentials: 'include' }
+        );
+        if (!res.ok) return;
+        const data = await res.json();
+        const map = {};
+        (data.agents || []).forEach((a) => {
+          map[a.agent_id] = a.mode;
+        });
+        window.__ZAVORA_MODES__ = map;
+        if (ui.applyModeBadges) ui.applyModeBadges();
+      } catch (_) {
+        /* offline / not signed in */
+      }
     }
 
     async function initSession() {
@@ -152,7 +233,8 @@
       cards.clear();
     }
 
-    function spawnCard(index, spec) {
+    function spawnCard(index, spec, domain) {
+      if (domain && !spec.domain) spec.domain = domain;
       const card = ui.buildCard(spec);
       ui.cardsEl.appendChild(card.el);
       card.el.animate(
@@ -207,12 +289,18 @@
     }
 
     function handleEvent(ev, intentText) {
+      // Phase 2 surfaces (chat panel, approvals inbox) observe the same stream.
+      try {
+        window.dispatchEvent(new CustomEvent('zavora:field-event', { detail: ev }));
+      } catch (_) {
+        /* never let listeners break orchestration */
+      }
       switch (ev.type) {
         case 'scenario':
           beginScenario(ev.key, ev.text || intentText, ev.total_cards || 0);
           break;
         case 'card_spawn':
-          spawnCard(ev.index, ev.card);
+          spawnCard(ev.index, ev.card, ev.domain);
           break;
         case 'card_status':
           updateStatus(ev.index, ev.status, ev.line);
@@ -347,6 +435,31 @@
       await consumeSse(res, trimmed);
     }
 
+    // S10-T3: a conversational turn with the Mother Agent. Same SSE pipeline as an
+    // intent (cards bloom in the field), plus the turn lands in the session chat history.
+    async function submitChat(text) {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      await ensureSession();
+      if (abortController) abortController.abort();
+      abortController = new AbortController();
+      const res = await fetch(`/api/sessions/${sessionId}/chat`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'text/event-stream',
+        },
+        body: JSON.stringify({ text: trimmed }),
+        signal: abortController.signal,
+      });
+      if (!res.ok) {
+        const detail = await res.text().catch(() => '');
+        throw new Error(`chat failed: ${res.status}${detail ? ` — ${detail}` : ''}`);
+      }
+      await consumeSse(res, trimmed);
+    }
+
     window.__ZAVORA_LIVE__ = {
       submit(text) {
         submitLive(text).catch((err) => {
@@ -357,11 +470,24 @@
           else alert(msg);
         });
       },
+      chat(text) {
+        return submitChat(text);
+      },
+      ensureSession,
+      getSessionId() {
+        return sessionId;
+      },
+      recordUiEvent(kind, extra) {
+        queueUiEvent(kind, extra);
+      },
     };
 
     wirePersistence();
+    wireUiSignals();
     window.addEventListener('zavora:voice-intent', onVoiceIntent);
-    initSession().catch(() => ensureSession().catch(() => {}));
+    initSession()
+      .catch(() => ensureSession().catch(() => {}))
+      .then(() => fetchModes());
     console.info('[zavora] live mode — SSE orchestration + persistence enabled');
   }
 
