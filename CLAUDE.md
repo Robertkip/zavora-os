@@ -39,7 +39,9 @@ and user-owned memory.
 cargo test --lib                                  # unit tests (fast, offline)
 cargo test --test validate -- awp_gate business_toml mock_deck combine_action keyword_router \
   artifact_paths session_store voice_state greeting_brand background_cards ambient_store \
-  tour_prompts proactive_mock mcp_allowlist health_exposes                              # offline
+  tour_prompts proactive_mock mcp_allowlist health_exposes \
+  domain_ intake_ mother_ ledger_ permission_ gate_ pending_ memory_ effects_ \
+  consent_ tasks_ s7_                    # same list as CI; DB-backed ones return early without DATABASE_URL
 cargo test --test validate -- gemini_ router_agent suzy_agent                             # needs GOOGLE_API_KEY
 cargo test --test validate -- postgres_schema ui_session_persists pg_agent_session        # needs DATABASE_URL
 cargo test --test validate deck_workflow_writes_three_artifacts -- --ignored              # full E2E, slow
@@ -68,6 +70,7 @@ cargo clippy --all-targets
 | `src/routes/` | Axum handlers. Each public route has a `[[capabilities]]` entry in `business.toml` and calls `state.awp.check(...)`. |
 | `src/tools/` | MCP child-process spawn with reconnect (`mcp.rs`), allowlist catalog (`allowlist.rs`), registry sync, `MergedToolset`, `exec_tool` for one-off calls. |
 | `src/ambient/` | Cron-driven background agents (research, scout, maker), `AmbientStore` with a broadcast channel and the DND flag. |
+| `src/intelligence/` | Content-free ledger (`ledger.rs`), daily pattern aggregation (`patterns.rs`, S7-T1), personal baseline and drift detection (`baseline.rs`, S7-T2), their Postgres I/O (`store.rs`). Pure statistics, no clock: `as_of` is an argument. `src/bin/run_baseline.rs` runs the pipeline locally; `INTELLIGENCE_UTC_OFFSET_HOURS` sets the day boundary. |
 | `src/rails/`, `src/greeting/`, `src/voice/` | People/Live rails, personalized greeting (facts only), Gemini Live voice over WebSocket. |
 | `src/awp_gate.rs`, `src/auth.rs`, `src/pg_session.rs` | AWP trust levels and rate limits, JWT/OAuth, adk session persistence. |
 | `web/index.html`, `web/static/field-client.js` | The field UI and its SSE bridge. The visual language is a product constraint — do not redesign it while wiring features. |

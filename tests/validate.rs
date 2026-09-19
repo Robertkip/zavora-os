@@ -2297,3 +2297,135 @@ async fn tasks_pg_roundtrip_and_sprint_a_migrations() {
     assert_eq!(fresh.purge(&user).await, 1);
     assert!(TaskStore::new(Some(pool)).get(&user, t.id).await.is_none());
 }
+
+// ---------------------------------------------------------------------------------------------
+// Phase 2 · S7 — patterns + personal baseline (S7-T1, S7-T2, S7-T9)
+// Offline tests read the checked-in synthetic ledger; the Postgres round-trip needs DATABASE_URL.
+// ---------------------------------------------------------------------------------------------
+
+const S7_USER: &str = "00000000-0000-0000-0000-000000000001";
+
+fn s7_fixture() -> Vec<spatial_os::intelligence::ActivityEvent> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/synth_ledger_6w_drift.jsonl");
+    let text = std::fs::read_to_string(&path).expect("synthetic ledger fixture is readable");
+    text.lines()
+        .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
+        .map(|l| serde_json::from_str(l).expect("fixture row parses as ActivityEvent"))
+        .collect()
+}
+
+fn s7_date(s: &str) -> chrono::NaiveDate {
+    chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
+}
+
+#[test]
+fn s7_patterns_aggregate_fixture_into_daily_values() {
+    use spatial_os::intelligence::patterns::{aggregate, dim};
+    let events = s7_fixture();
+    assert_eq!(events.len(), 934);
+    let daily = aggregate(&events);
+    let days: std::collections::BTreeSet<_> = daily.iter().map(|d| d.day).collect();
+    assert_eq!(days.len(), 42);
+    let work_end: Vec<_> = daily.iter().filter(|d| d.dimension == dim::WORK_END).collect();
+    assert_eq!(work_end.len(), 30, "work end exists on weekdays only");
+    assert!(work_end.iter().all(|d| d.value > 16.0 && d.value < 21.0));
+    assert_eq!(daily.iter().filter(|d| d.dimension == dim::READING_MINUTES).count(), 42);
+    assert!(daily.iter().all(|d| dim::ALL.contains(&d.dimension.as_str())), "only known dimension ids");
+}
+
+#[test]
+fn s7_baseline_drift_yields_exactly_one_observation() {
+    use spatial_os::intelligence::baseline::{evaluate, Config};
+    use spatial_os::intelligence::patterns::{aggregate, dim};
+    let daily = aggregate(&s7_fixture());
+    let out = evaluate(S7_USER, &daily, s7_date("2026-09-19"), &[], &Config::default());
+    assert!(out.warmup.is_none(), "28 baseline days are present");
+    let dims: std::collections::BTreeSet<&str> = out.drifts.iter().map(|d| d.dimension.as_str()).collect();
+    assert!(dims.contains(dim::WORK_END) && dims.contains(dim::READING_MINUTES), "drifting: {dims:?}");
+    assert!(!dims.contains(dim::WORK_START), "work start did not move: {dims:?}");
+    let obs = out.observation.expect("exactly one drift observation");
+    assert_eq!(obs.kind, "drift");
+    assert!(obs.dimensions.len() >= 2, "{:?}", obs.dimensions);
+    assert!(obs.text.contains("two weeks"), "{}", obs.text);
+    assert!(obs.text.contains("your usual"), "{}", obs.text);
+    let lower = obs.text.to_lowercase();
+    for banned in ["overwork", "too much", "should", "unhealthy", "procrastinat", "lazy"] {
+        assert!(!lower.contains(banned), "verdict word {banned:?} in {}", obs.text);
+    }
+    assert_eq!(obs.facts["window_days"], 14);
+    assert!(obs.facts["dimensions"].as_array().unwrap().len() >= 2);
+    assert_eq!(obs.offer, "Would you like me to help you review what's changed?");
+}
+
+#[test]
+fn s7_baseline_warmup_suppresses_observations() {
+    use spatial_os::intelligence::baseline::{evaluate, Config};
+    use spatial_os::intelligence::patterns::aggregate;
+    let daily = aggregate(&s7_fixture());
+    // As of 1 Sep the baseline window reaches back before the first fixture day: < 14 days seen.
+    let out = evaluate(S7_USER, &daily, s7_date("2026-09-01"), &[], &Config::default());
+    let w = out.warmup.expect("still learning");
+    assert!(w.days_seen < w.days_needed, "{w:?}");
+    assert!(out.observation.is_none() && out.drifts.is_empty());
+}
+
+#[test]
+fn s7_baseline_cooldown_suppresses_repeat() {
+    use spatial_os::intelligence::baseline::{evaluate, Config, ExistingObservation};
+    use spatial_os::intelligence::patterns::aggregate;
+    let daily = aggregate(&s7_fixture());
+    let as_of = s7_date("2026-09-19");
+    let first = evaluate(S7_USER, &daily, as_of, &[], &Config::default()).observation.expect("first run fires");
+    let recent = [ExistingObservation { dimensions: first.dimensions.clone(), created_on: s7_date("2026-09-17") }];
+    let again = evaluate(S7_USER, &daily, as_of, &recent, &Config::default());
+    assert!(again.observation.is_none(), "inside the 7-day cooldown");
+    assert!(!again.cooled_down.is_empty());
+    let old = [ExistingObservation { dimensions: first.dimensions.clone(), created_on: s7_date("2026-09-01") }];
+    assert!(evaluate(S7_USER, &daily, as_of, &old, &Config::default()).observation.is_some(), "after the cooldown");
+}
+
+#[test]
+fn s7_baseline_disabled_dimension_is_ignored() {
+    use spatial_os::intelligence::baseline::{evaluate, Config};
+    use spatial_os::intelligence::patterns::{aggregate, dim};
+    let daily = aggregate(&s7_fixture());
+    let mut cfg = Config::default();
+    for d in [dim::WORK_END, dim::WORK_MINUTES, dim::READING_MINUTES] {
+        cfg.disabled.insert(d.to_string());
+    }
+    let out = evaluate(S7_USER, &daily, s7_date("2026-09-19"), &[], &cfg);
+    assert!(out.drifts.iter().all(|d| !cfg.disabled.contains(&d.dimension)), "{:?}", out.drifts);
+    assert!(out.baselines.iter().all(|b| !cfg.disabled.contains(&b.dimension)));
+}
+
+#[tokio::test]
+async fn s7_store_roundtrip_daily_baselines_observation() {
+    use spatial_os::intelligence::baseline::{evaluate, Config};
+    use spatial_os::intelligence::patterns::aggregate;
+    use spatial_os::intelligence::store;
+    common::load_env();
+    if std::env::var("DATABASE_URL").is_err() {
+        return;
+    }
+    let pool = common::postgres_pool().await;
+    sqlx::migrate!("./migrations").run(&pool).await.expect("migrations apply");
+    let user = format!("s7-test-{}", uuid::Uuid::new_v4());
+    let mut daily = aggregate(&s7_fixture());
+    for d in &mut daily {
+        d.user_id = user.clone();
+    }
+    let n = store::upsert_daily(&pool, &daily).await.unwrap();
+    assert_eq!(store::upsert_daily(&pool, &daily).await.unwrap(), n, "idempotent");
+    let as_of = s7_date("2026-09-19");
+    let out = evaluate(&user, &daily, as_of, &[], &Config::default());
+    store::upsert_baselines(&pool, &out.baselines).await.unwrap();
+    let obs = out.observation.expect("drift on the fixture");
+    store::insert_observation(&pool, &obs).await.unwrap();
+    let recent = store::recent_observations(&pool, &user, s7_date("2026-09-12")).await.unwrap();
+    assert_eq!(recent.len(), 1);
+    assert_eq!(recent[0].dimensions, obs.dimensions);
+    assert_eq!(recent[0].created_on, as_of);
+    for table in ["observations", "baselines", "activity_daily"] {
+        sqlx::query(&format!("DELETE FROM {table} WHERE user_id = $1")).bind(&user).execute(&pool).await.unwrap();
+    }
+}
