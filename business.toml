@@ -219,6 +219,13 @@ method = "GET"
 access_level = "anonymous"
 
 [[capabilities]]
+name = "get_worlds"
+description = "The Work and Home worlds' agent rosters — ids, missions, glyphs, default modes, labeled-stub flags and a starter prompt each (concept §4–§5); static catalog, no personal data"
+endpoint = "/api/worlds"
+method = "GET"
+access_level = "anonymous"
+
+[[capabilities]]
 name = "google_oauth"
 description = "Sign in with Google — sets ax_session JWT cookie"
 endpoint = "/api/auth/google"

@@ -23,3 +23,4 @@ pub mod public;
 pub mod session;
 pub mod tasks;
 pub mod voice;
+pub mod worlds;

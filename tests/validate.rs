@@ -2802,3 +2802,41 @@ async fn arbitration_asks_one_question_for_a_work_home_overlap() {
     assert!(conflicts[0].trace_id.is_some());
     assert!(!serde_json::to_string(&conflicts).unwrap().contains("client review"), "ledger carries counts, not commitments");
 }
+
+/// The two world pages list different agents: `GET /api/worlds` serves each world's roster from
+/// the registries (concept §4–§5), anonymous because it is a static catalog.
+#[tokio::test]
+async fn work_and_home_worlds_route_lists_both_rosters() {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    let state = offline_app_state();
+    let app = axum::Router::new()
+        .route("/api/worlds", axum::routing::get(spatial_os::routes::worlds::get_worlds))
+        .with_state(state);
+    let res = app.oneshot(Request::get("/api/worlds").body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK, "anonymous callers may read the catalog");
+    let body: serde_json::Value = serde_json::from_slice(&axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap()).unwrap();
+    let work = body["work"].as_array().unwrap();
+    let home = body["home"].as_array().unwrap();
+    assert_eq!(work.len(), spatial_os::worlds::work::WORK_AGENTS.len());
+    assert_eq!(home.len(), spatial_os::worlds::home::HOME_AGENTS.len());
+    let work_ids: Vec<&str> = work.iter().map(|a| a["id"].as_str().unwrap()).collect();
+    let home_ids: Vec<&str> = home.iter().map(|a| a["id"].as_str().unwrap()).collect();
+    assert!(work_ids.contains(&"productivity") && work_ids.contains(&"email"));
+    assert!(home_ids.contains(&"family") && home_ids.contains(&"finance"));
+    assert!(work_ids.iter().all(|id| !home_ids.contains(id)), "rosters must differ");
+    for a in work.iter().chain(home.iter()) {
+        assert!(a["title"].as_str().unwrap().len() > 2);
+        assert!(a["glyph"].as_str().unwrap().len() > 0);
+        assert!(a["prompt"].as_str().unwrap().len() > 5);
+        assert!(["observe", "suggest", "automate"].contains(&a["mode"].as_str().unwrap()));
+    }
+    assert!(work.iter().any(|a| a["stub"] == true), "career / professional social are labeled stubs");
+
+    use adk_awp::BusinessContextLoader;
+    let ctx = BusinessContextLoader::from_file(&common::manifest_dir().join("business.toml")).unwrap().load();
+    let cap = ctx.capabilities.iter().find(|c| c.name == "get_worlds").expect("get_worlds capability");
+    assert_eq!(cap.access_level, awp_types::TrustLevel::Anonymous);
+}
