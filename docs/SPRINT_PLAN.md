@@ -1,7 +1,7 @@
-# Zavora Personal AI OS — Sprint Plan (Phase 2)
+# Agentrix Personal AI OS — Sprint Plan (Phase 2)
 
 **Companion to:** [`PERSONAL_AI_OS.md`](./PERSONAL_AI_OS.md) (concept & architecture)
-**Baseline:** [zavora-ai/zavora-os](https://github.com/zavora-ai/zavora-os) @ `228ec78`
+**Baseline:** [zavora-ai/agentrix-os](https://github.com/zavora-ai/agentrix-os) @ `228ec78`
 **Status:** Draft v1.0 — 2026-09-19
 **Convention:** Phase 1 = milestones M0–M11 in `docs/IMPLEMENTATION_PLAN.md`. Phase 2 = sprints S0–S12 below. Sprint IDs, task IDs (`S4-T3`) and backlog IDs (`BK-1xx`) are stable references for tickets.
 

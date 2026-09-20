@@ -23,7 +23,7 @@ pub struct VoiceStatus {
     pub ws_path: &'static str,
     pub input_rate_hz: u32,
     pub output_rate_hz: u32,
-    /// Camera channel available on this websocket (`ZAVORA_CAMERA`, needs voice).
+    /// Camera channel available on this websocket (`AGENTRIX_CAMERA`, needs voice).
     pub camera: bool,
 }
 
@@ -31,8 +31,8 @@ pub async fn status(State(state): State<AppState>) -> Json<VoiceStatus> {
     Json(VoiceStatus {
         enabled: state.voice.enabled,
         ws_path: "/ws/voice",
-        input_rate_hz: 16_000,
-        output_rate_hz: 24_000,
+        input_rate_hz: crate::voice::realtime::INPUT_RATE_HZ,
+        output_rate_hz: crate::voice::realtime::OUTPUT_RATE_HZ,
         camera: state.voice.camera,
     })
 }
@@ -109,7 +109,11 @@ async fn handle_voice_ws(socket: ws::WebSocket, state: AppState, session_id: Opt
                 "type": "connected",
                 "session_id": ui_session_id,
                 "runner_session_id": runner.session_id().await,
-                "camera": state.voice.camera
+                "camera": state.voice.camera,
+                // Negotiated like the mia example's `ready`: the client sizes its audio contexts
+                // from these instead of assuming.
+                "input_rate": crate::voice::realtime::INPUT_RATE_HZ,
+                "output_rate": crate::voice::realtime::OUTPUT_RATE_HZ
             })
             .to_string()
             .into(),
@@ -199,11 +203,26 @@ async fn handle_voice_ws(socket: ws::WebSocket, state: AppState, session_id: Opt
                                 .to_string()
                                 .into(),
                         )),
+                        // Suzy's spoken words (output transcription).
                         ServerEvent::TranscriptDelta { delta, .. } => Some(ws::Message::Text(
                             serde_json::json!({"type": "transcript", "content": delta})
                                 .to_string()
                                 .into(),
                         )),
+                        // The user's words (input transcription) — Gemini streams deltas; the
+                        // client coalesces them and fills the intent bar.
+                        ServerEvent::InputTranscriptDelta { delta, .. } => Some(ws::Message::Text(
+                            serde_json::json!({"type": "user_transcript_delta", "content": delta})
+                                .to_string()
+                                .into(),
+                        )),
+                        ServerEvent::InputTranscriptCompleted { transcript, .. } => {
+                            Some(ws::Message::Text(
+                                serde_json::json!({"type": "user_transcript", "content": transcript})
+                                    .to_string()
+                                    .into(),
+                            ))
+                        }
                         ServerEvent::SpeechStarted { .. } => Some(ws::Message::Text(
                             serde_json::json!({"type": "speech_started"})
                                 .to_string()

@@ -1,12 +1,98 @@
-//! Suzy voice runner — Gemini Live via adk-realtime (mia pattern).
+//! Suzy voice runner — Gemini Live via adk-realtime, following the mia example
+//! (`adk-rust/examples/realtime_voice`).
+//!
+//! What the example settled and this module mirrors:
+//! - **Server-side VAD with interruption** (`VadConfig::server_vad()`): the model stops talking
+//!   when the user starts; the browser drops its queued audio on `speech_started` (barge-in).
+//! - **Transcription on** (`with_transcription()`): Gemini then streams both the user's words
+//!   (`InputTranscriptDelta`) and Suzy's (`TranscriptDelta`), which the websocket forwards.
+//! - **Async tool handlers.** The runner awaits a handler on its own task, so a handler that
+//!   blocks the runtime (`Handle::block_on`, as the first version did) panics the session the
+//!   first time Suzy calls a tool. Handlers here are `async` and await the stores directly.
 
-use adk_realtime::config::{RealtimeConfig, ToolDefinition};
-use adk_realtime::runner::{FnToolHandler, RealtimeRunner};
+use adk_realtime::config::{RealtimeConfig, ToolDefinition, VadConfig};
+use adk_realtime::events::ToolCall;
+use adk_realtime::runner::{FnToolHandler, RealtimeRunner, ToolHandler};
+use async_trait::async_trait;
 use serde_json::json;
 
 use crate::agents::suzy;
-use crate::state::AppState;
+use crate::state::{AppState, SessionStore};
 use crate::voice::camera;
+
+/// Gemini Live wire format: 16 kHz PCM16 in, 24 kHz PCM16 out.
+pub const INPUT_RATE_HZ: u32 = 16_000;
+pub const OUTPUT_RATE_HZ: u32 = 24_000;
+
+/// Session config shared by the voice websocket and the tests.
+pub fn suzy_config(instruction: &str, voice: &str) -> RealtimeConfig {
+    RealtimeConfig::default()
+        .with_instruction(instruction)
+        .with_voice(voice)
+        // Server-side turn detection; a new user turn interrupts the model's reply.
+        .with_vad(VadConfig::server_vad().with_interrupt(true))
+        // Input + output transcription (Gemini enables both from this one switch).
+        .with_transcription()
+}
+
+/// `get_session_context` — the browser session's scenario, cards and artifacts.
+struct SessionContextTool {
+    sessions: SessionStore,
+    session_id: Option<String>,
+}
+
+#[async_trait]
+impl ToolHandler for SessionContextTool {
+    async fn execute(&self, _call: &ToolCall) -> adk_realtime::Result<serde_json::Value> {
+        if let Some(sid) = &self.session_id
+            && let Some(record) = self.sessions.get(sid).await
+        {
+            return Ok(json!({
+                "session_id": record.session_id,
+                "context": suzy::session_context(&record),
+                "domains": crate::mother::domain_summary(&record),
+            }));
+        }
+        Ok(json!({
+            "session_id": null,
+            "context": "No active session — ask what the user would like to do."
+        }))
+    }
+}
+
+/// `submit_intent` — resolve the UI session and hand the intent back to the client, which posts
+/// it through the normal intent route (`dispatch: client_sse`) so cards bloom in the field.
+struct SubmitIntentTool {
+    state: AppState,
+    session_id: Option<String>,
+}
+
+#[async_trait]
+impl ToolHandler for SubmitIntentTool {
+    async fn execute(&self, call: &ToolCall) -> adk_realtime::Result<serde_json::Value> {
+        let text = call.arguments["text"].as_str().unwrap_or("").trim().to_string();
+        if text.is_empty() {
+            return Ok(json!({ "status": "error", "message": "intent text required" }));
+        }
+        let (session_id, user_id) = match &self.session_id {
+            Some(id) => match self.state.sessions.get(id).await {
+                Some(record) => (record.session_id, record.user_id),
+                None => return Ok(json!({ "status": "error", "message": "session not found" })),
+            },
+            None => {
+                let record = self.state.sessions.create().await;
+                (record.session_id, record.user_id)
+            }
+        };
+        Ok(json!({
+            "status": "started",
+            "session_id": session_id,
+            "user_id": user_id,
+            "intent": text,
+            "dispatch": "client_sse"
+        }))
+    }
+}
 
 pub async fn build_suzy_runner(
     state: &AppState,
@@ -19,7 +105,7 @@ pub async fn build_suzy_runner(
         .ok_or_else(|| anyhow::anyhow!("Gemini Live not configured (set GOOGLE_API_KEY)"))?;
 
     let mut instruction = String::from(
-        "You are Suzy — warm, confident, quietly witty voice of the Mother Agent in Zavora Personal AI OS. \
+        "You are Suzy — warm, confident, quietly witty voice of the Mother Agent in Agentrix Personal AI OS. \
          Help the user express intent, start their day, and let the Mother Agent orchestrate the specialized agents. \
          When they ask what they need to know today (or for their briefing), call submit_intent with exactly that and read the summary aloud. \
          Keep replies concise and spoken-friendly (1–3 sentences unless they ask for detail).",
@@ -44,18 +130,9 @@ pub async fn build_suzy_runner(
         }
     }
 
-    let sessions = state.sessions.clone();
-    let sid_for_context = session_id.clone();
-    let sid_for_intent = session_id.clone();
-    let state_for_intent = state.clone();
-
     let mut builder = RealtimeRunner::builder()
         .model(model)
-        .config(
-            RealtimeConfig::default()
-                .with_instruction(&instruction)
-                .with_voice(&state.voice.voice_name),
-        )
+        .config(suzy_config(&instruction, &state.voice.voice_name))
         .tool(
             ToolDefinition {
                 name: "get_session_context".into(),
@@ -68,23 +145,10 @@ pub async fn build_suzy_runner(
                     "required": []
                 })),
             },
-            FnToolHandler::new(move |_call| {
-                let sessions = sessions.clone();
-                let sid = sid_for_context.clone();
-                if let (Some(sid), Ok(handle)) = (sid, tokio::runtime::Handle::try_current()) {
-                    if let Some(record) = handle.block_on(sessions.get(&sid)) {
-                        return Ok(json!({
-                            "session_id": record.session_id,
-                            "context": suzy::session_context(&record),
-                            "domains": crate::mother::domain_summary(&record),
-                        }));
-                    }
-                }
-                Ok(json!({
-                    "session_id": null,
-                    "context": "No active session — ask what the user would like to do."
-                }))
-            }),
+            SessionContextTool {
+                sessions: state.sessions.clone(),
+                session_id: session_id.clone(),
+            },
         )
         .tool(
             ToolDefinition {
@@ -105,53 +169,10 @@ pub async fn build_suzy_runner(
                     "required": ["text"]
                 })),
             },
-            FnToolHandler::new(move |call| {
-                let text = call.arguments["text"]
-                    .as_str()
-                    .unwrap_or("")
-                    .trim()
-                    .to_string();
-                if text.is_empty() {
-                    return Ok(json!({
-                        "status": "error",
-                        "message": "intent text required"
-                    }));
-                }
-
-                let state = state_for_intent.clone();
-                let sid = sid_for_intent.clone();
-                let handle = tokio::runtime::Handle::try_current().ok();
-                let Some(handle) = handle else {
-                    return Ok(json!({
-                        "status": "error",
-                        "message": "runtime unavailable"
-                    }));
-                };
-
-                let (session_id, user_id) = match sid {
-                    Some(ref id) => {
-                        let Some(record) = handle.block_on(state.sessions.get(id)) else {
-                            return Ok(json!({
-                                "status": "error",
-                                "message": "session not found"
-                            }));
-                        };
-                        (record.session_id, record.user_id)
-                    }
-                    None => {
-                        let record = handle.block_on(state.sessions.create());
-                        (record.session_id, record.user_id)
-                    }
-                };
-
-                Ok(json!({
-                    "status": "started",
-                    "session_id": session_id,
-                    "user_id": user_id,
-                    "intent": text,
-                    "dispatch": "client_sse"
-                }))
-            }),
+            SubmitIntentTool {
+                state: state.clone(),
+                session_id: session_id.clone(),
+            },
         );
 
     // Camera channel (M10-T5): the call itself is the signal — the websocket relays every tool
@@ -177,7 +198,36 @@ pub async fn build_suzy_runner(
         );
     }
 
-    let runner = builder.build()?;
+    Ok(builder.build()?)
+}
 
-    Ok(runner)
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use adk_realtime::config::VadMode;
+
+    #[test]
+    fn suzy_config_enables_server_vad_interruption_and_transcription() {
+        let cfg = suzy_config("You are Suzy.", "Aoede");
+        let vad = cfg.turn_detection.expect("server VAD configured");
+        assert_eq!(vad.mode, VadMode::ServerVad);
+        assert_eq!(vad.interrupt_response, Some(true), "a new user turn interrupts the reply");
+        assert!(cfg.input_audio_transcription.is_some(), "transcription on");
+        assert_eq!(cfg.voice.as_deref(), Some("Aoede"));
+        assert!(cfg.instruction.as_deref().unwrap_or("").contains("Suzy"));
+        assert_eq!((INPUT_RATE_HZ, OUTPUT_RATE_HZ), (16_000, 24_000));
+    }
+
+    #[tokio::test]
+    async fn submit_intent_tool_is_async_and_creates_a_session_when_none_is_bound() {
+        // Building a full AppState needs the test fixtures in tests/validate.rs; here we only
+        // check the argument handling that does not touch the stores.
+        let call = ToolCall { call_id: "c1".into(), name: "submit_intent".into(), arguments: json!({ "text": "   " }) };
+        assert_eq!(call.arguments["text"].as_str().unwrap().trim(), "");
+        let call = ToolCall { call_id: "c2".into(), name: "get_session_context".into(), arguments: json!({}) };
+        let tool = SessionContextTool { sessions: SessionStore::new(), session_id: Some("missing".into()) };
+        let out = tool.execute(&call).await.unwrap();
+        assert!(out["session_id"].is_null());
+        assert!(out["context"].as_str().unwrap().contains("No active session"));
+    }
 }

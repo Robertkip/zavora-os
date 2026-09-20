@@ -9,14 +9,14 @@
 (function () {
   'use strict';
 
-  const KEY = 'zavora_lens';
+  const KEY = 'agentrix_lens';
   const ORDER = ['work', 'both', 'home'];
   const TITLES = { work: 'Work World', home: 'Home World' };
 
   async function boot() {
-    if (window.__ZAVORA_BOOT__) await window.__ZAVORA_BOOT__;
-    if (window.__ZAVORA_DEMO__) return;
-    if (localStorage.getItem('zavora_p2') === '0') return;
+    if (window.__AGENTRIX_BOOT__) await window.__AGENTRIX_BOOT__;
+    if (window.__AGENTRIX_DEMO__) return;
+    if (localStorage.getItem('agentrix_p2') === '0') return;
 
     const ctl = document.getElementById('lensCtl');
     const title = document.getElementById('worldTitle');
@@ -51,7 +51,7 @@
         /* private browsing */
       }
       if (record) {
-        window.__ZAVORA_LIVE__?.recordUiEvent?.('ui_lens', {
+        window.__AGENTRIX_LIVE__?.recordUiEvent?.('ui_lens', {
           domain: world === 'both' ? 'shared' : world,
         });
       }
@@ -65,7 +65,7 @@
     }
 
     // Other surfaces (camera gestures, M10-T5) drive the pager through this.
-    window.__ZAVORA_LENS__ = { step, set: (w) => set(w, true), current: () => current };
+    window.__AGENTRIX_LENS__ = { step, set: (w) => set(w, true), current: () => current };
 
     btns.forEach((b) => b.addEventListener('click', () => set(b.dataset.lens, true)));
 
@@ -75,32 +75,63 @@
       el.closest &&
       el.closest('.card, .bgcard, .p2-panel, .lens, .rail, .livefeed, .horizon, .greet, .ea, input, textarea, button');
 
-    // touch swipe: content follows the finger direction (swipe left → Home side)
-    let tx = null;
-    let ty = null;
-    document.addEventListener(
-      'touchstart',
-      (e) => {
-        if (skip(e.target)) {
-          tx = null;
+    // Swipe with a finger or a mouse drag on the background: the stage follows the pointer
+    // (damped) so the gesture is visible while it happens, then snaps to the next world when
+    // released past the threshold. Swipe left → Home side, like the pager buttons.
+    const stage = document.querySelector('.stage');
+    let sx = null;
+    let sy = null;
+    let pid = null;
+    let swiping = false;
+    function follow(dx) {
+      if (!stage) return;
+      const k = Math.max(-140, Math.min(140, dx * 0.35));
+      stage.style.transform = `translateX(${k}px)`;
+      stage.style.opacity = String(1 - Math.min(0.3, Math.abs(k) / 500));
+    }
+    function settle() {
+      document.body.classList.remove('world-swiping');
+      if (stage) {
+        stage.style.transform = '';
+        stage.style.opacity = '';
+      }
+    }
+    document.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || skip(e.target)) {
+        sx = null;
+        return;
+      }
+      sx = e.clientX;
+      sy = e.clientY;
+      pid = e.pointerId;
+      swiping = false;
+    });
+    document.addEventListener('pointermove', (e) => {
+      if (sx == null || e.pointerId !== pid) return;
+      const dx = e.clientX - sx;
+      const dy = e.clientY - sy;
+      if (!swiping) {
+        if (Math.abs(dy) > 14 && Math.abs(dy) > Math.abs(dx)) {
+          sx = null; // vertical: leave it to scrolling
           return;
         }
-        tx = e.touches[0].clientX;
-        ty = e.touches[0].clientY;
-      },
-      { passive: true }
-    );
-    document.addEventListener(
-      'touchend',
-      (e) => {
-        if (tx == null) return;
-        const dx = e.changedTouches[0].clientX - tx;
-        const dy = e.changedTouches[0].clientY - ty;
-        tx = null;
-        if (Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(dy) * 1.5) step(dx < 0 ? 1 : -1);
-      },
-      { passive: true }
-    );
+        if (Math.abs(dx) < 12) return;
+        swiping = true;
+        document.body.classList.add('world-swiping');
+      }
+      follow(dx);
+    });
+    const end = (e) => {
+      if (sx == null || e.pointerId !== pid) return;
+      const dx = e.clientX - sx;
+      const was = swiping;
+      sx = null;
+      swiping = false;
+      settle();
+      if (was && Math.abs(dx) > 70) step(dx < 0 ? 1 : -1);
+    };
+    document.addEventListener('pointerup', end);
+    document.addEventListener('pointercancel', end);
 
     // trackpad: two-finger horizontal scroll
     let acc = 0;
@@ -114,7 +145,7 @@
         if (now - accAt > 400) acc = 0;
         accAt = now;
         acc += e.deltaX;
-        if (Math.abs(acc) > 160) {
+        if (Math.abs(acc) > 110) {
           step(acc > 0 ? 1 : -1);
           acc = 0;
         }
@@ -136,5 +167,5 @@
     ctl.removeAttribute('hidden');
   }
 
-  boot().catch((err) => console.warn('[zavora] worlds pager boot failed', err));
+  boot().catch((err) => console.warn('[agentrix] worlds pager boot failed', err));
 })();
