@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="780" viewBox="0 0 1040 780" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0b1020"/><stop offset="1" stop-color="#070a12"/></linearGradient>
+    <linearGradient id="mother" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#7c5cff"/><stop offset="1" stop-color="#25d0c0"/></linearGradient>
+    <linearGradient id="work" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4a72e8"/><stop offset="1" stop-color="#5b8cff"/></linearGradient>
+    <linearGradient id="home" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1fae72"/><stop offset="1" stop-color="#3ddc97"/></linearGradient>
+    <style>
+      .box { fill: #111827; stroke: rgba(150,170,255,.18); stroke-width: 1; rx: 12; }
+      .t { fill: #eef2ff; font-size: 14px; font-weight: 700; }
+      .s { fill: #9aa4c4; font-size: 11.5px; }
+      .lbl { fill: #8b95b8; font-size: 10px; letter-spacing: 2.2px; font-weight: 800; }
+      .arrow { stroke: rgba(150,170,255,.45); stroke-width: 1.5; fill: none; marker-end: url(#m); }
+      .pill { font-size: 11px; font-weight: 700; fill: #fff; }
+    </style>
+    <marker id="m" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="rgba(150,170,255,.55)"/></marker>
+  </defs>
+
+  <rect width="1040" height="780" fill="url(#bg)" rx="18"/>
+  <text x="40" y="44" fill="#eef2ff" font-size="20" font-weight="800">Agentrix OS — Personal AI OS architecture</text>
+  <text x="40" y="66" class="s">One person → one AI OS → one Mother Agent → many specialized agents → one coordinated life. Rust/Axum · adk-rust · Gemini · MCP · AWP</text>
+
+  <!-- Surfaces -->
+  <text x="40" y="104" class="lbl">SURFACES</text>
+  <rect x="150" y="84" width="205" height="46" class="box"/><text x="166" y="104" class="t">Field UI · TODAY</text><text x="166" y="121" class="s">cards · VerbUI · worlds pager</text>
+  <rect x="365" y="84" width="205" height="46" class="box"/><text x="381" y="104" class="t">Suzy live voice + camera</text><text x="381" y="121" class="s">Gemini Live · gestures + ding</text>
+  <rect x="580" y="84" width="205" height="46" class="box"/><text x="596" y="104" class="t">Mother chat</text><text x="596" y="121" class="s">/api/sessions/{id}/chat · SSE</text>
+  <rect x="795" y="84" width="205" height="46" class="box"/><text x="811" y="104" class="t">AWP · external agents</text><text x="811" y="121" class="s">/awp/a2a · trust levels · Suggest cap</text>
+  <path d="M575 130 L575 156" class="arrow"/>
+
+  <!-- Mother -->
+  <text x="40" y="188" class="lbl">KERNEL</text>
+  <rect x="150" y="158" width="850" height="62" rx="14" fill="#141b33" stroke="url(#mother)" stroke-width="1.5"/>
+  <text x="170" y="184" class="t" font-size="16">✦ Mother Agent <tspan class="s" font-weight="400">(Suzy is its voice)</tspan></text>
+  <text x="170" y="205" class="s">intake → context assembly → delegation planner → arbitration → synthesis → action gate · no MCP tools of its own · src/mother/</text>
+  <path d="M340 220 L340 250" class="arrow"/><path d="M810 220 L810 250" class="arrow"/>
+  <text x="575" y="242" class="s" text-anchor="middle" fill="#c3cae6">⇄ agent bus · trace ids · fan-out depth 2</text>
+
+  <!-- Worlds -->
+  <text x="40" y="300" class="lbl">WORLDS</text>
+  <rect x="150" y="252" width="410" height="124" class="box" stroke="#4a72e8" stroke-opacity=".6"/>
+  <rect x="166" y="264" width="52" height="18" rx="9" fill="url(#work)"/><text x="176" y="277" class="pill">WORK</text>
+  <text x="228" y="278" class="t">Work Mother</text>
+  <text x="166" y="302" class="s">Productivity · Email · Team Comms · Project</text>
+  <text x="166" y="318" class="s">Research &amp; Knowledge · Work Automation</text>
+  <text x="166" y="334" class="s">Career · Professional Social (labeled stubs)</text>
+  <text x="166" y="358" class="s" fill="#7f8db5">work.* memory · work Google account · Slack · GitHub · CRM</text>
+  <rect x="590" y="252" width="410" height="124" class="box" stroke="#1fae72" stroke-opacity=".6"/>
+  <rect x="606" y="264" width="52" height="18" rx="9" fill="url(#home)"/><text x="616" y="277" class="pill">HOME</text>
+  <text x="668" y="278" class="t">Home Mother</text>
+  <text x="606" y="302" class="s">Family · Personal Productivity · Health &amp; Wellness</text>
+  <text x="606" y="318" class="s">Finance (read-only) · Entertainment · Social &amp; Fun</text>
+  <text x="606" y="334" class="s">Travel · Personal Social (labeled stub)</text>
+  <text x="606" y="358" class="s" fill="#7f8db5">home.* memory · personal account · banking · health imports</text>
+  <path d="M575 376 L575 404" class="arrow"/>
+
+  <!-- Intelligence -->
+  <text x="40" y="442" class="lbl">INTELLIGENCE</text>
+  <rect x="150" y="406" width="850" height="60" class="box" stroke="#199e70" stroke-opacity=".5"/>
+  <text x="170" y="430" class="t">Content-free activity ledger → patterns → personal baseline → balance · digital behaviour · reading &amp; knowledge</text>
+  <text x="170" y="450" class="s">deterministic statistics (median + MAD, 14-day warm-up, drift, cooldown) · the LLM only phrases, in neutral language · observations, never pop-ups</text>
+  <path d="M575 466 L575 494" class="arrow"/>
+
+  <!-- Memory -->
+  <text x="40" y="530" class="lbl">MEMORY</text>
+  <rect x="150" y="496" width="850" height="56" class="box" stroke="#9085e9" stroke-opacity=".5"/>
+  <text x="170" y="520" class="t">Personal memory — known · assumed · recommended</text>
+  <text x="170" y="539" class="s">scoped by domain · provenance on every change · consent-linked · encrypted when sensitive · user-editable, exportable, deletable</text>
+  <path d="M575 552 L575 580" class="arrow"/>
+
+  <!-- Automation & trust -->
+  <text x="40" y="618" class="lbl">AUTOMATION</text><text x="40" y="632" class="lbl">&amp; TRUST</text>
+  <rect x="150" y="582" width="270" height="70" class="box" stroke="#c98500" stroke-opacity=".5"/>
+  <text x="166" y="606" class="t">Permission gate</text><text x="166" y="624" class="s">👁 Observe · 💡 Suggest · ⚡ Automate</text><text x="166" y="640" class="s">by effect class, at the tool boundary</text>
+  <rect x="436" y="582" width="270" height="70" class="box" stroke="#c98500" stroke-opacity=".5"/>
+  <text x="452" y="606" class="t">Pending actions · approvals</text><text x="452" y="624" class="s">approve · edit · reject · batch · 48 h expiry</text><text x="452" y="640" class="s">recipes: coded conditions, undo window</text>
+  <rect x="722" y="582" width="278" height="70" class="box" stroke="#c98500" stroke-opacity=".5"/>
+  <text x="738" y="606" class="t">Audit log · undo</text><text x="738" y="624" class="s">who · what · on whose approval · when</text><text x="738" y="640" class="s">public posts / money: never automated</text>
+  <path d="M575 652 L575 680" class="arrow"/>
+
+  <!-- Privacy + integrations -->
+  <text x="40" y="720" class="lbl">PRIVACY</text>
+  <rect x="150" y="682" width="370" height="70" class="box"/>
+  <text x="166" y="706" class="t">Identity · encryption · consent · retention</text>
+  <text x="166" y="724" class="s">JWT / OAuth · per-agent tool allowlists</text>
+  <text x="166" y="740" class="s">domain isolation · consents · content-free logs</text>
+  <text x="545" y="720" class="lbl">REAL WORLD</text>
+  <rect x="640" y="682" width="360" height="70" class="box"/>
+  <text x="656" y="706" class="t">MCP toolservers · AWP peers</text>
+  <text x="656" y="724" class="s">calendar · email · Slack · CRM · GitHub · banking</text>
+  <text x="656" y="740" class="s">maps · weather · news · docs · slides · real estate</text>
+</svg>
