@@ -55,9 +55,18 @@
     }
   }
 
+  // The local detector (gesture-detect.js) and Suzy's ui_gesture tool call can both report the
+  // same gesture; the second report inside 1.5 s is the same gesture, not a new one.
+  let lastGesture = null;
+  let lastAt = 0;
+
   function onGesture(ev) {
     if (window.__AGENTRIX_DEMO__) return;
     const gesture = ev.detail?.gesture;
+    const now = Date.now();
+    if (gesture === lastGesture && now - lastAt < 1500) return;
+    lastGesture = gesture;
+    lastAt = now;
     const lens = window.__AGENTRIX_LENS__;
     switch (gesture) {
       case 'swipe_left':
@@ -80,6 +89,8 @@
       default:
         return;
     }
+    // Audible confirmation that the gesture was seen — the same ding a completed action plays.
+    window.__AGENTRIX_UI__?.sfx?.('ding');
     const world = document.body.dataset.world;
     window.__AGENTRIX_LIVE__?.recordUiEvent?.('ui_gesture', {
       domain: world === 'work' || world === 'home' ? world : 'shared',

@@ -51,6 +51,7 @@ cargo test --test validate -- gemini_ router_agent suzy_agent                   
 cargo test --test validate -- postgres_schema ui_session_persists pg_agent_session        # needs DATABASE_URL
 cargo test --test validate deck_workflow_writes_three_artifacts -- --ignored              # full E2E, slow
 cargo clippy --all-targets
+node scripts/test-gesture-classifier.mjs          # camera gesture rules (web/static/gesture-classifier.js)
 ```
 
 - **libtest filters are substrings, not regexes.** Pass several names after `--`; a single
@@ -79,6 +80,7 @@ cargo clippy --all-targets
 | `src/rails/`, `src/greeting/`, `src/voice/` | People/Live rails, personalized greeting (facts only), Gemini Live voice over WebSocket; `voice/camera.rs` is the camera channel (frames in, `ui_gesture` tool call out, `AGENTRIX_CAMERA`). |
 | `src/awp_gate.rs`, `src/auth.rs`, `src/pg_session.rs` | AWP trust levels and rate limits, JWT/OAuth, adk session persistence. |
 | `web/index.html`, `web/static/field-client.js` | The field UI and its SSE bridge. The visual language is a product constraint — do not redesign it while wiring features. |
+| `web/static/{lens,worlds,live-voice,gestures,gesture-classifier,gesture-detect,camera-preview}.js` | Worlds pager + swipe; per-world agent rosters from `/api/worlds`; Gemini Live bridge (gapless playback, barge-in); camera gestures → UI verbs with a ding; local hand-gesture detection (MediaPipe from jsDelivr, pure classifier tested in Node); camera window. |
 | `business.toml`, `mcp_allowlists.toml` | AWP identity and capability catalog; per-agent tool allowlists (and, from Phase 2, world / mode / effects). |
 | `migrations/` | sqlx migrations, applied at boot. Numbered; never edit an applied one. |
 | `docs/` | `SPECIFICATION.md` (Phase 1 spec, FR/NFR ids), `IMPLEMENTATION_PLAN.md` (tickable milestones and sprints), `PERSONAL_AI_OS.md` + `SPRINT_PLAN.md` (Phase 2), `PROGRESS.md` (per-person team sprints A–F for S4–S12), `adr/` (decisions), `personal-ai-os.html` (one-page interactive summary). |

@@ -59,6 +59,18 @@
     setTimeout(() => last.classList.remove('hit'), 1800);
   });
 
+  // Local detector state (gesture-detect.js): loading, ready, hand in view, or unavailable.
+  window.addEventListener('agentrix:gesture-detector', (e) => {
+    if (!status) return;
+    const d = e.detail || {};
+    if (d.state === 'loading') status.textContent = 'Suzy is watching · loading gesture detector…';
+    else if (d.state === 'unavailable') status.textContent = 'Suzy is watching · local gestures unavailable';
+    else if (d.state === 'ready') {
+      const cat = d.category && d.category !== 'None' ? ` (${d.category.replace('_', ' ').toLowerCase()})` : '';
+      status.textContent = d.hand ? `Suzy is watching · hand in view${cat}` : 'Suzy is watching · gestures ready';
+    }
+  });
+
   window.addEventListener('agentrix:voice-transcript', (e) => {
     if (!last) return;
     if (e.detail?.done) { replyDone = true; return; }
